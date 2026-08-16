@@ -1,4 +1,5 @@
 <resources>
-    <string name="app_name">TypeAssist</string>
-    <string name="app_name_service">TypeAssist AI</string>
+    <string name="app_name">SimpleSnippet</string>
+    <string name="app_name_service">SimpleSnippet</string>
+    <string name="accessibility_service_description">SimpleSnippet watches text fields for your snippet triggers (for example ..email) and replaces them with your saved text. Everything runs on your device — no text is stored or sent anywhere.</string>
 </resources>

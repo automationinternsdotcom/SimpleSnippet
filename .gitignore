@@ -55,15 +55,8 @@ keystore.properties
 *.keystore
 *.key
 
-# External Native Build output
-.externalNativeBuild
-.cxx/
-
 # Mac OS junk
 .DS_Store
 
 # editor folder
 /.acside/
-
-# Reference projects
-SysBlock/
