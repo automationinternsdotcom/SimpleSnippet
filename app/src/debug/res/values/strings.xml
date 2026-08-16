@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">TypeAssist (Debug)</string>
-    <string name="app_name_service">TypeAssist AI (Debug)</string>
+    <string name="app_name">SimpleSnippet (Debug)</string>
+    <string name="app_name_service">SimpleSnippet (Debug)</string>
 </resources>

@@ -1,71 +1,32 @@
 plugins {
     id 'com.android.application'
     id 'org.jetbrains.kotlin.android'
-    id 'org.jetbrains.kotlin.plugin.compose' version '2.0.0'
+    alias(libs.plugins.kotlin.compose)
 }
 
-// --- MOVED THIS DOWN (Must be after plugins) ---
+// Optional release signing: reads keystore.properties at the repo root if present.
 def keystorePropertiesFile = rootProject.file("keystore.properties")
 def keystoreProperties = new Properties()
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
-// -----------------------------------------------
 
 android {
-    namespace = 'com.typeassist.app'
+    namespace = 'com.simplesnippet.app'
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.typeassist.app"
+        applicationId = "com.simplesnippet.app"
         minSdk = 24
         targetSdk = 35
-        versionCode = 11
-        versionName = "4.2.0"
+        versionCode = 1
+        versionName = "1.0.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
-
-        externalNativeBuild {
-            cmake {
-                cppFlags "-std=c++17 -O3"
-                arguments "-DCMAKE_BUILD_TYPE=Release"
-            }
-        }
-        ndk {
-            abiFilters 'arm64-v8a'
-        }
     }
 
-    flavorDimensions = ["distribution"]
-    productFlavors {
-        full {
-            dimension = "distribution"
-            buildConfigField "boolean", "SHOW_UPDATES", "true"
-        }
-        fdroid {
-            dimension = "distribution"
-            buildConfigField "boolean", "SHOW_UPDATES", "false"
-        }
-    }
-
-    // Disable splits as we only target arm64-v8a now
-    splits {
-        abi {
-            enable = false
-        }
-    }
-
-    externalNativeBuild {
-        cmake {
-            path = "src/main/cpp/CMakeLists.txt"
-            version = "3.22.1"
-        }
-    }
-
-    ndkVersion = "27.0.12077973"
-
-    // Define Signing Config
     signingConfigs {
         release {
             // Only try to sign if the file exists to prevent crashes if missing
@@ -92,12 +53,7 @@ android {
             }
         }
     }
-/*
-    lintOptions {
-        checkReleaseBuilds false
-        abortOnError false
-    }
-*/
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -111,44 +67,29 @@ android {
         compose = true
         buildConfig = true
     }
-
-    composeOptions {
-        // Version handled by plugin
-    }
 }
 
 dependencies {
     implementation 'androidx.core:core-ktx:1.12.0'
-    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
-    
+
     // --- JETPACK COMPOSE ---
     implementation platform('androidx.compose:compose-bom:2024.06.00')
     implementation 'androidx.activity:activity-compose:1.9.0'
     implementation 'androidx.compose.ui:ui'
     implementation 'androidx.compose.ui:ui-graphics'
-    implementation 'androidx.compose.ui:ui-tooling-preview'
     implementation 'androidx.compose.material3:material3'
     implementation 'com.google.android.material:material:1.12.0'
-    
+
     // Icons
     implementation 'androidx.compose.material:material-icons-extended'
     implementation 'androidx.core:core-splashscreen:1.0.1'
 
-    // Networking & JSON
-    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
-    implementation 'com.squareup.retrofit2:retrofit:2.9.0'
-    implementation 'com.squareup.retrofit2:converter-gson:2.9.0'
+    // Config persistence (JSON blob in SharedPreferences)
     implementation 'com.google.code.gson:gson:2.10.1'
-
-    // Markdown rendering for release notes
-    implementation 'com.github.jeziellago:compose-markdown:0.5.0'
 
     // Testing
     testImplementation 'junit:junit:4.13.2'
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
-    androidTestImplementation platform('androidx.compose:compose-bom:2024.06.00')
-    androidTestImplementation 'androidx.compose.ui:ui-test-junit4'
+    androidTestImplementation 'androidx.test:runner:1.5.2'
     debugImplementation 'androidx.compose.ui:ui-tooling'
-    debugImplementation 'androidx.compose.ui:ui-test-manifest'
 }
