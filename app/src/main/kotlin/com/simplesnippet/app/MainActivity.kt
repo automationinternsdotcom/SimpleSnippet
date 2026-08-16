@@ -28,6 +28,4 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
-    fun isAccessibilityEnabled(): Boolean = SnippetAccessibilityService.isEnabled(this)
 }

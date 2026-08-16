@@ -61,7 +61,15 @@ fun PermissionsScreen(
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted -> isNotificationsEnabled = granted }
+    ) { granted ->
+        isNotificationsEnabled = granted
+        // The service posts its status notification when it connects; if it was
+        // already running when this grant arrived, re-post it now — otherwise
+        // it would stay invisible until the service reconnects.
+        if (granted && SnippetAccessibilityService.isEnabled(context)) {
+            SnippetAccessibilityService.showServiceNotification(context)
+        }
+    }
 
     fun checkPermissions() {
         // Accessibility Check

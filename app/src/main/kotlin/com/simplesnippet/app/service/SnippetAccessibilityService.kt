@@ -47,6 +47,52 @@ class SnippetAccessibilityService : AccessibilityService() {
                 context.contentResolver,
                 Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
             )?.contains(context.packageName + "/" + SnippetAccessibilityService::class.java.name) == true
+
+        /**
+         * Posts (or re-posts) the ongoing status notification. Callable from
+         * app code too: on Android 13+ the POST_NOTIFICATIONS grant usually
+         * arrives after the service has already connected, and without a
+         * re-post the notification would stay invisible until a reconnect.
+         *
+         * Posted as a plain notification, never via startForeground: this app
+         * targets SDK 35, and on API 34+ startForeground without a declared
+         * foregroundServiceType throws — which is why the old foreground
+         * notification never appeared on modern devices.
+         */
+        fun showServiceNotification(context: Context) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val channel = NotificationChannel(
+                        CHANNEL_ID,
+                        "SimpleSnippet",
+                        NotificationManager.IMPORTANCE_LOW
+                    ).apply {
+                        description = "Shows while snippet expansion is active"
+                        setShowBadge(false)
+                    }
+                    context.getSystemService(NotificationManager::class.java)
+                        .createNotificationChannel(channel)
+                }
+
+                val intent = Intent(context, MainActivity::class.java)
+                val pendingIntent =
+                    PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+
+                val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+                    .setContentTitle("SimpleSnippet is active")
+                    .setContentText("Watching for snippet triggers.")
+                    .setSmallIcon(R.drawable.ic_notification_monochrome)
+                    .setLargeIcon(BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher))
+                    .setContentIntent(pendingIntent)
+                    .setPriority(NotificationCompat.PRIORITY_LOW)
+                    .setOngoing(true)
+                    .build()
+
+                NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error posting service notification", e)
+            }
+        }
     }
 
     private val gson = Gson()
@@ -69,7 +115,7 @@ class SnippetAccessibilityService : AccessibilityService() {
         }
         prefsListener = listener
         prefs.registerOnSharedPreferenceChangeListener(listener)
-        showServiceNotification()
+        showServiceNotification(this)
         Log.d(TAG, "Service connected")
     }
 
@@ -143,18 +189,17 @@ class SnippetAccessibilityService : AccessibilityService() {
                 return
             }
 
-            val fullTrigger = cfg.snippetTriggerPrefix + match.snippet.trigger
             if (match.variations.size > 1) {
                 overlayManager.showSnippetSelection(
                     match.snippet.trigger,
                     match.variations,
                     isDarkMode()
                 ) { selected ->
-                    replaceTrigger(inputNode, fullTrigger, selected, currentText, cfg.allowTriggerAnywhere)
+                    replaceTrigger(inputNode, match.snippet, selected, currentText, cfg)
                 }
             } else {
                 debounceHandler.postDelayed(
-                    { replaceTrigger(inputNode, fullTrigger, match.variations[0], currentText, cfg.allowTriggerAnywhere) },
+                    { replaceTrigger(inputNode, match.snippet, match.variations[0], currentText, cfg) },
                     cfg.triggerDebounceMs
                 )
             }
@@ -168,28 +213,36 @@ class SnippetAccessibilityService : AccessibilityService() {
      * detected is stale by the time the debounce fires or the user picks a
      * variation, and splicing on it would clobber whatever was typed since.
      *
+     * Re-running SnippetMatcher.find on the fresh text (restricted to the one
+     * matched snippet) re-applies the end-of-text anchor and keeps production
+     * on the same find/splice code the unit tests exercise.
+     *
      * [capturedText] is the event-time text, used as a fallback for apps whose
      * nodes report empty text (detection has the same fallback via event.text —
      * without it those apps would detect the trigger but never expand it).
      */
     private fun replaceTrigger(
         node: AccessibilityNodeInfo,
-        fullTrigger: String,
+        snippet: Snippet,
         replacement: String,
         capturedText: String,
-        allowAnywhere: Boolean
+        cfg: AppConfig
     ) {
-        if (!node.refresh()) return
-        val freshText = node.text?.toString()?.takeIf { it.isNotEmpty() } ?: capturedText
-        val idx = freshText.lastIndexOf(fullTrigger)
-        if (idx == -1) return
-        // Re-apply the end-of-text anchor that SnippetMatcher.find enforced at
-        // detection time — the field may have changed since.
-        if (!allowAnywhere && idx + fullTrigger.length != freshText.length) return
-        pasteText(
-            node,
-            freshText.substring(0, idx) + replacement + freshText.substring(idx + fullTrigger.length)
-        )
+        try {
+            if (!node.refresh()) return
+            val freshText = node.text?.toString()?.takeIf { it.isNotEmpty() } ?: capturedText
+            val fresh = SnippetMatcher.find(
+                freshText,
+                cfg.snippetTriggerPrefix,
+                listOf(snippet),
+                cfg.allowTriggerAnywhere
+            ) ?: return
+            pasteText(node, SnippetMatcher.splice(freshText, fresh, replacement))
+        } catch (e: Exception) {
+            // Runs from the handler/overlay callback, outside the event's
+            // try/catch — a disconnected node must not crash the process.
+            Log.e(TAG, "Error replacing trigger", e)
+        }
     }
 
     private fun pasteText(node: AccessibilityNodeInfo, text: String) {
@@ -203,50 +256,15 @@ class SnippetAccessibilityService : AccessibilityService() {
             Configuration.UI_MODE_NIGHT_YES
     }
 
-    private fun showServiceNotification() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    CHANNEL_ID,
-                    "SimpleSnippet",
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply {
-                    description = "Shows while snippet expansion is active"
-                    setShowBadge(false)
-                }
-                getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-            }
-
-            val intent = Intent(this, MainActivity::class.java)
-            val pendingIntent =
-                PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
-
-            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("SimpleSnippet is active")
-                .setContentText("Watching for snippet triggers.")
-                .setSmallIcon(R.drawable.ic_notification_monochrome)
-                .setLargeIcon(BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
-                .setContentIntent(pendingIntent)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setOngoing(true)
-                .build()
-
-            // Posted as a plain notification, never via startForeground: this app
-            // targets SDK 35, and on API 34+ startForeground without a declared
-            // foregroundServiceType throws — which is why the old foreground
-            // notification never appeared on modern devices.
-            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, notification)
-        } catch (e: Exception) {
-            Log.e(TAG, "Error posting service notification", e)
-        }
-    }
-
     override fun onInterrupt() {
+        debounceHandler.removeCallbacksAndMessages(null)
         if (::overlayManager.isInitialized) overlayManager.hideAll()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        // A pending debounced replacement must not fire against a dead service.
+        debounceHandler.removeCallbacksAndMessages(null)
         prefsListener?.let { prefs.unregisterOnSharedPreferenceChangeListener(it) }
         prefsListener = null
         NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID)

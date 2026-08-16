@@ -1,6 +1,7 @@
 package com.simplesnippet.app.ui
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
@@ -14,9 +15,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import com.google.gson.GsonBuilder
 import com.simplesnippet.app.data.AppConfig
 import com.simplesnippet.app.data.normalized
@@ -27,12 +25,13 @@ import com.simplesnippet.app.ui.screens.*
 @Composable
 fun SimpleSnippetApp() {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val gson = GsonBuilder().setPrettyPrinting().create()
-    val prefs = context.getSharedPreferences(
-        SnippetAccessibilityService.PREFS_NAME,
-        Context.MODE_PRIVATE
-    )
+    val gson = remember { GsonBuilder().setPrettyPrinting().create() }
+    val prefs = remember(context) {
+        context.getSharedPreferences(
+            SnippetAccessibilityService.PREFS_NAME,
+            Context.MODE_PRIVATE
+        )
+    }
 
     fun loadConfig(): AppConfig = try {
         gson.fromJson(
@@ -49,25 +48,20 @@ fun SimpleSnippetApp() {
     var previousScreen by rememberSaveable { mutableStateOf("snippets") } // Track previous screen for animation
 
     // A single state instance for the whole composition: keying remember on
-    // currentScreen would discard it on navigation, leaving the lifecycle
-    // observer below writing into a dead MutableState.
+    // currentScreen would discard it on navigation, leaving the listener
+    // below writing into a dead MutableState.
     var config by remember { mutableStateOf(loadConfig()) }
 
-    // Re-read the config whenever we navigate to a different screen
-    LaunchedEffect(currentScreen) {
-        config = loadConfig()
-    }
-
-    // Reload on resume: picks up snippets quick-saved by the accessibility
-    // service while the app was backgrounded.
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                config = loadConfig()
-            }
+    // The accessibility service runs in this same process, so a prefs listener
+    // picks up its quick-saves the instant they happen — including while this
+    // activity stays resumed (split-screen), where an ON_RESUME reload would
+    // miss them and a later save here would clobber the service's write.
+    DisposableEffect(prefs) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == SnippetAccessibilityService.KEY_CONFIG) config = loadConfig()
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
 
     fun saveConfig(newConfig: AppConfig) {

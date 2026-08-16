@@ -44,7 +44,7 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onNavigate: (
     var searchQuery by remember { mutableStateOf("") }
     var isSortAlphabetical by remember { mutableStateOf(false) }
 
-    val snippets = config.snippets ?: mutableListOf()
+    val snippets = config.snippets
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 

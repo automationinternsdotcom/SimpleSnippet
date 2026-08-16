@@ -34,7 +34,13 @@ class OverlayManager(private val context: Context) {
 
     val isShowing: Boolean get() = currentSnippetTrigger != null
 
+    // Always points at the latest caller's callback: the same-trigger early
+    // return below keeps the existing views, but the selection must land in
+    // whatever field the service most recently matched, not the original one.
+    private var onSelectedCurrent: ((String) -> Unit)? = null
+
     fun showSnippetSelection(trigger: String, variations: List<String>, isDarkMode: Boolean, onSelected: (String) -> Unit) {
+        onSelectedCurrent = onSelected
         if (currentSnippetTrigger == trigger) return // Already showing this one
 
         currentSnippetTrigger = trigger
@@ -97,7 +103,7 @@ class OverlayManager(private val context: Context) {
                     setBackgroundResource(outValue.resourceId)
 
                     setOnClickListener {
-                        onSelected(variation)
+                        onSelectedCurrent?.invoke(variation)
                         hideSnippetSelection()
                     }
                 }
@@ -172,6 +178,7 @@ class OverlayManager(private val context: Context) {
 
     fun hideSnippetSelection() {
         currentSnippetTrigger = null
+        onSelectedCurrent = null
         mainHandler.post {
             removeSnippetSelectionInternal()
         }

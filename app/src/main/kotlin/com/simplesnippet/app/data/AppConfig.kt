@@ -31,7 +31,11 @@ fun AppConfig?.normalized(): AppConfig {
     if (config.saveSnippetPattern == null) config.saveSnippetPattern = "(.save:%:%)"
     if (config.triggerDebounceMs <= 0L) config.triggerDebounceMs = 400L
     config.snippets.removeAll { it == null || it.trigger == null || it.trigger.isBlank() }
-    config.snippets.forEach { if (it.contents == null) it.contents = mutableListOf() }
+    config.snippets.forEach {
+        if (it.contents == null) it.contents = mutableListOf()
+        // Gson also lets nulls through inside the list itself.
+        it.contents.removeAll { c -> c == null }
+    }
     return config
 }
 
