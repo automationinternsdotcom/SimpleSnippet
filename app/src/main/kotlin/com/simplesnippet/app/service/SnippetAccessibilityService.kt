@@ -98,6 +98,7 @@ class SnippetAccessibilityService : AccessibilityService() {
     private val gson = Gson()
     private lateinit var overlayManager: OverlayManager
     private val debounceHandler = Handler(Looper.getMainLooper())
+    private val expansionGuard = ExpansionGuard()
     @Volatile private var config: AppConfig = createDefaultConfig()
 
     // SharedPreferences only holds a weak reference to its listener, so this
@@ -126,6 +127,13 @@ class SnippetAccessibilityService : AccessibilityService() {
             Log.e(TAG, "Failed to parse config", e)
             null
         }.normalized()
+        // Work queued under the previous config must not run under the new one:
+        // a queued expansion or an open picker could otherwise fire after the
+        // master switch was turned off or the snippet was edited away.
+        debounceHandler.removeCallbacksAndMessages(null)
+        if (::overlayManager.isInitialized && overlayManager.isShowing) {
+            overlayManager.hideSnippetSelection()
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
@@ -156,6 +164,10 @@ class SnippetAccessibilityService : AccessibilityService() {
         if (currentText.isEmpty() && event.text.isNotEmpty()) {
             currentText = event.text.joinToString("")
         }
+
+        // The echo of our own ACTION_SET_TEXT must not be treated as input:
+        // re-matching it lets self-referential or cyclic snippets expand forever.
+        if (expansionGuard.consumeIfServiceWrite(currentText)) return
 
         val cfg = config
         if (!cfg.isAppEnabled) return
@@ -195,11 +207,11 @@ class SnippetAccessibilityService : AccessibilityService() {
                     match.variations,
                     isDarkMode()
                 ) { selected ->
-                    replaceTrigger(inputNode, match.snippet, selected, currentText, cfg)
+                    replaceTrigger(inputNode, match.snippet, selected, currentText)
                 }
             } else {
                 debounceHandler.postDelayed(
-                    { replaceTrigger(inputNode, match.snippet, match.variations[0], currentText, cfg) },
+                    { replaceTrigger(inputNode, match.snippet, match.variations[0], currentText) },
                     cfg.triggerDebounceMs
                 )
             }
@@ -220,21 +232,28 @@ class SnippetAccessibilityService : AccessibilityService() {
      * [capturedText] is the event-time text, used as a fallback for apps whose
      * nodes report empty text (detection has the same fallback via event.text —
      * without it those apps would detect the trigger but never expand it).
+     *
+     * Runs against the *current* config, not the one captured at detection
+     * time: by the time the debounce fires or the user picks a variation, the
+     * app may have been disabled or the snippet edited away.
      */
     private fun replaceTrigger(
         node: AccessibilityNodeInfo,
         snippet: Snippet,
         replacement: String,
-        capturedText: String,
-        cfg: AppConfig
+        capturedText: String
     ) {
         try {
+            val cfg = config
+            if (!cfg.isAppEnabled) return
+            val liveSnippet = cfg.snippets.find { it.trigger == snippet.trigger } ?: return
+            if (replacement !in liveSnippet.contents) return
             if (!node.refresh()) return
             val freshText = node.text?.toString()?.takeIf { it.isNotEmpty() } ?: capturedText
             val fresh = SnippetMatcher.find(
                 freshText,
                 cfg.snippetTriggerPrefix,
-                listOf(snippet),
+                listOf(liveSnippet),
                 cfg.allowTriggerAnywhere
             ) ?: return
             pasteText(node, SnippetMatcher.splice(freshText, fresh, replacement))
@@ -246,6 +265,7 @@ class SnippetAccessibilityService : AccessibilityService() {
     }
 
     private fun pasteText(node: AccessibilityNodeInfo, text: String) {
+        expansionGuard.expectServiceWrite(text)
         val arguments = Bundle()
         arguments.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text)
         node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
