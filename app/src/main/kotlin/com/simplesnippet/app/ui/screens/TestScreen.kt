@@ -1,4 +1,4 @@
-package com.typeassist.app.ui.screens
+package com.simplesnippet.app.ui.screens
 
 import android.app.Activity
 import androidx.compose.foundation.clickable

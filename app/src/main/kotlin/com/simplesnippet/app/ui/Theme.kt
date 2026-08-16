@@ -1,4 +1,4 @@
-package com.typeassist.app.ui
+package com.simplesnippet.app.ui
 
 import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme

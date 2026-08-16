@@ -1,4 +1,4 @@
-package com.typeassist.app.ui.components
+package com.simplesnippet.app.ui.components
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background

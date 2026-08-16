@@ -1,4 +1,4 @@
-package com.typeassist.app.ui
+package com.simplesnippet.app.ui
 
 import android.content.Context
 import android.content.Intent
@@ -18,16 +18,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.google.gson.GsonBuilder
-import com.typeassist.app.MainActivity
-import com.typeassist.app.data.AppConfig
-import com.typeassist.app.data.createDefaultConfig
-import com.typeassist.app.data.model.GitHubRelease
-import com.typeassist.app.ui.screens.*
+import com.simplesnippet.app.MainActivity
+import com.simplesnippet.app.data.AppConfig
+import com.simplesnippet.app.data.createDefaultConfig
+import com.simplesnippet.app.data.model.GitHubRelease
+import com.simplesnippet.app.ui.screens.*
 import okhttp3.OkHttpClient
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
-fun TypeAssistApp(client: OkHttpClient, updateInfo: GitHubRelease?) {
+fun SimpleSnippetApp(client: OkHttpClient, updateInfo: GitHubRelease?) {
     val context = LocalContext.current
     val gson = GsonBuilder().setPrettyPrinting().create()
     val prefs = context.getSharedPreferences("GeminiConfig", Context.MODE_PRIVATE)

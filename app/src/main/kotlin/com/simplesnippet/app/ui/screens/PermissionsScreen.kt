@@ -1,4 +1,4 @@
-package com.typeassist.app.ui.screens
+package com.simplesnippet.app.ui.screens
 
 import android.Manifest
 import android.content.Context
@@ -34,7 +34,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.typeassist.app.utils.XiaomiUtils
+import com.simplesnippet.app.utils.XiaomiUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -58,7 +58,7 @@ fun PermissionsScreen(
     fun checkPermissions() {
         // Accessibility Check
         val prefString = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-        isAccessibilityEnabled = prefString?.contains("${context.packageName}/com.typeassist.app.service.MyAccessibilityService") == true
+        isAccessibilityEnabled = prefString?.contains("${context.packageName}/com.simplesnippet.app.service.SnippetAccessibilityService") == true
 
         // Notification Check (Android 13+)
         isNotificationsEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

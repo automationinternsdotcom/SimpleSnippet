@@ -1,4 +1,4 @@
-package com.typeassist.app.service
+package com.simplesnippet.app.service
 
 import android.content.Context
 import android.graphics.Color
@@ -12,7 +12,7 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.ProgressBar
 import android.widget.Toast
-import com.typeassist.app.data.AppConfig
+import com.simplesnippet.app.data.AppConfig
 
 class OverlayManager(private val context: Context) {
 

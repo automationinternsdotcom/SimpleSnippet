@@ -1,4 +1,4 @@
-package com.typeassist.app.ui.screens
+package com.simplesnippet.app.ui.screens
 
 import android.app.Activity
 import android.widget.Toast
@@ -26,8 +26,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
-import com.typeassist.app.data.AppConfig
-import com.typeassist.app.data.Snippet
+import com.simplesnippet.app.data.AppConfig
+import com.simplesnippet.app.data.Snippet
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -1,4 +1,4 @@
-package com.typeassist.app
+package com.simplesnippet.app
 
 import android.content.Context
 import android.os.Bundle
@@ -14,11 +14,11 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.gson.Gson
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.typeassist.app.ui.AppTheme
-import com.typeassist.app.ui.TypeAssistApp
-import com.typeassist.app.ui.components.UpdateDialog
-import com.typeassist.app.data.model.GitHubRelease
-import com.typeassist.app.data.repository.UpdateRepository
+import com.simplesnippet.app.ui.AppTheme
+import com.simplesnippet.app.ui.SimpleSnippetApp
+import com.simplesnippet.app.ui.components.UpdateDialog
+import com.simplesnippet.app.data.model.GitHubRelease
+import com.simplesnippet.app.data.repository.UpdateRepository
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
@@ -42,7 +42,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             AppTheme {
-                TypeAssistApp(client, updateInfo = updateInfoState)
+                SimpleSnippetApp(client, updateInfo = updateInfoState)
                 
                 updateInfoState?.let { update ->
                     UpdateDialog(release = update, onDismiss = { updateInfoState = null })
@@ -96,6 +96,6 @@ class MainActivity : ComponentActivity() {
     
     fun isAccessibilityEnabled(): Boolean {
         val prefString = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-        return prefString?.contains("$packageName/com.typeassist.app.service.MyAccessibilityService") == true
+        return prefString?.contains("$packageName/com.simplesnippet.app.service.SnippetAccessibilityService") == true
     }
 }

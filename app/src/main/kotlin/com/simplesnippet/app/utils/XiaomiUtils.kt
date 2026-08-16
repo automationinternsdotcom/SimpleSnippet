@@ -1,4 +1,4 @@
-package com.typeassist.app.utils
+package com.simplesnippet.app.utils
 
 import android.app.AppOpsManager
 import android.content.ComponentName

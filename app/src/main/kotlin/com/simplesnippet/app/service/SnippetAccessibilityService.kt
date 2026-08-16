@@ -1,4 +1,4 @@
-package com.typeassist.app.service
+package com.simplesnippet.app.service
 
 import android.accessibilityservice.AccessibilityService
 import android.app.NotificationChannel
@@ -14,19 +14,19 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.app.NotificationCompat
 import com.google.gson.Gson
-import com.typeassist.app.R
-import com.typeassist.app.api.AiProvider
-import com.typeassist.app.api.CloudflareApiClient
-import com.typeassist.app.api.CustomApiClient
-import com.typeassist.app.api.GeminiApiClient
-import com.typeassist.app.api.LocalLlmClient
-import com.typeassist.app.data.AppConfig
-import com.typeassist.app.data.HistoryManager
+import com.simplesnippet.app.R
+import com.simplesnippet.app.api.AiProvider
+import com.simplesnippet.app.api.CloudflareApiClient
+import com.simplesnippet.app.api.CustomApiClient
+import com.simplesnippet.app.api.GeminiApiClient
+import com.simplesnippet.app.api.LocalLlmClient
+import com.simplesnippet.app.data.AppConfig
+import com.simplesnippet.app.data.HistoryManager
 import okhttp3.*
 import java.util.regex.Pattern
 import android.util.Log
 
-class MyAccessibilityService : AccessibilityService() {
+class SnippetAccessibilityService : AccessibilityService() {
 
     private val TAG = "TypeAssistService"
     @Volatile private var isSnippetSelectionVisible = false
@@ -92,7 +92,7 @@ class MyAccessibilityService : AccessibilityService() {
                 manager.createNotificationChannel(channel)
             }
 
-            val intent = Intent(this, com.typeassist.app.MainActivity::class.java)
+            val intent = Intent(this, com.simplesnippet.app.MainActivity::class.java)
             val pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
 
             val largeIcon = android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
@@ -281,7 +281,7 @@ class MyAccessibilityService : AccessibilityService() {
                                     existing.contents.add(newContent)
                                 }
                             } else {
-                                config.snippets.add(com.typeassist.app.data.Snippet(newTrigger, contents = mutableListOf(newContent)))
+                                config.snippets.add(com.simplesnippet.app.data.Snippet(newTrigger, contents = mutableListOf(newContent)))
                             }
                             prefs.edit().putString("config_json", gson.toJson(config)).apply()
                             val cleanText = currentText.replace(fullMatch, newContent)
@@ -294,7 +294,7 @@ class MyAccessibilityService : AccessibilityService() {
 
                 // -- Utility Belt --
                 findBalancedCommand(currentText, "(.c:")?.let { (fullMatch, expr) ->
-                    val result = com.typeassist.app.utils.UtilityBelt.evaluateMath(expr)
+                    val result = com.simplesnippet.app.utils.UtilityBelt.evaluateMath(expr)
                     originalTextCache = currentText
                     if (config.isHistoryEnabled) HistoryManager.add(originalTextCache)
                     lastNode = inputNode
@@ -312,9 +312,9 @@ class MyAccessibilityService : AccessibilityService() {
                 }
 
                 val utilityTriggers = mapOf(
-                    ".now" to { com.typeassist.app.utils.UtilityBelt.getTime() },
-                    ".date" to { com.typeassist.app.utils.UtilityBelt.getDate() },
-                    ".pass" to { com.typeassist.app.utils.UtilityBelt.generatePassword() }
+                    ".now" to { com.simplesnippet.app.utils.UtilityBelt.getTime() },
+                    ".date" to { com.simplesnippet.app.utils.UtilityBelt.getDate() },
+                    ".pass" to { com.simplesnippet.app.utils.UtilityBelt.generatePassword() }
                 )
 
                 for ((uTrigger, uAction) in utilityTriggers) {

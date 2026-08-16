@@ -1,4 +1,4 @@
-package com.typeassist.app.data
+package com.simplesnippet.app.data
 
 import java.io.Serializable
 
