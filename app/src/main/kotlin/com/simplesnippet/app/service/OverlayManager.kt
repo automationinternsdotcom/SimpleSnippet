@@ -1,7 +1,6 @@
 package com.simplesnippet.app.service
 
 import android.content.Context
-import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
@@ -10,252 +9,42 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
-import android.widget.ProgressBar
 import android.widget.Toast
-import com.simplesnippet.app.data.AppConfig
 
 class OverlayManager(private val context: Context) {
 
     private var windowManager: WindowManager? = null
-    
-    // --- UI Elements ---
-    private var loadingView: FrameLayout? = null
-    private var undoView: FrameLayout? = null
-    private var previewView: FrameLayout? = null 
 
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val hideUndoRunnable = Runnable { hideUndoButton() }
-    private val hidePreviewRunnable = Runnable { hidePreviewDialog() }
-    
-    // Callbacks
-    var onUndoAction: (() -> Unit)? = null
-    var onOverlayShown: (() -> Unit)? = null
-    var onOverlayHidden: (() -> Unit)? = null
 
     init {
         windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     }
 
-    fun showLoading(config: AppConfig) {
-        if (!config.enableLoadingOverlay) return
-        mainHandler.post {
-            if (loadingView != null) return@post
-            loadingView = FrameLayout(context).apply {
-                setBackgroundColor(0x77000000.toInt())
-                setPadding(30, 30, 30, 30)
-                background = GradientDrawable().apply { setColor(0x99000000.toInt()); cornerRadius = 40f }
-            }
-            val progressBar = ProgressBar(context)
-            progressBar.indeterminateTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
-            loadingView?.addView(progressBar)
-            val params = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT)
-            params.gravity = Gravity.CENTER
-            try { windowManager?.addView(loadingView, params) } catch (e: Exception) {}
-        }
-    }
-
-    fun hideLoading() {
-        mainHandler.post {
-            if (loadingView != null) { try { windowManager?.removeView(loadingView); loadingView = null } catch (e: Exception) {} }
-        }
-    }
-
-    fun showUndoButton(config: AppConfig) {
-        if (!config.enableUndoOverlay) return
-        mainHandler.post {
-            if (undoView != null) return@post
-            undoView = FrameLayout(context)
-            val btn = Button(context).apply {
-                text = "UNDO"
-                textSize = 14f
-                setTextColor(Color.WHITE)
-                background = GradientDrawable().apply { setColor(0xEE333333.toInt()); cornerRadius = 50f; setStroke(2, Color.WHITE) }
-                setOnClickListener { 
-                    onUndoAction?.invoke() 
-                    hideUndoButton()
-                }
-            }
-            undoView?.addView(btn)
-            val params = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT)
-            params.gravity = Gravity.CENTER
-            try { windowManager?.addView(undoView, params); mainHandler.postDelayed(hideUndoRunnable, 5000) } catch (e: Exception) {}
-        }
-    }
-
-    fun hideUndoButton() {
-        mainHandler.removeCallbacks(hideUndoRunnable)
-        mainHandler.post {
-            if (undoView != null) { try { windowManager?.removeView(undoView); undoView = null } catch (e: Exception) {} }
-        }
-    }
-
-    fun hidePreviewDialog() {
-        mainHandler.post { removePreviewInternal() }
-    }
-
-    private fun removePreviewInternal() {
-        mainHandler.removeCallbacks(hidePreviewRunnable)
-        if (previewView != null) {
-            try {
-                windowManager?.removeView(previewView)
-            } catch (e: Exception) {
-            } finally {
-                previewView = null
-            }
-        }
-    }
-
-    fun showPreviewDialog(text: String, isDarkMode: Boolean, onInsert: () -> Unit) {
-        mainHandler.post {
-            removePreviewInternal()
-            
-            // Material 3 Colors from Theme.kt
-            val cardBgColor = if (isDarkMode) 0xFF1C1B1F.toInt() else 0xFFFFFBFE.toInt() // Surface
-            val primaryTextColor = if (isDarkMode) 0xFF818CF8.toInt() else 0xFF4F46E5.toInt() // Primary
-            val secondaryTextColor = if (isDarkMode) 0xFFE6E1E5.toInt() else 0xFF1C1B1F.toInt() // OnSurface
-            val discardTextColor = if (isDarkMode) 0xFFCAC4D0.toInt() else 0xFF49454F.toInt() // OnSurfaceVariant
-            val insertTextColor = if (isDarkMode) 0xFF818CF8.toInt() else 0xFF4F46E5.toInt() // Primary
-
-            // The Card (As Root View)
-            val card = android.widget.LinearLayout(context).apply {
-                orientation = android.widget.LinearLayout.VERTICAL
-                setPadding(40, 40, 40, 40)
-                background = GradientDrawable().apply { 
-                    setColor(cardBgColor)
-                    cornerRadius = 32f 
-                    setStroke(3, insertTextColor) 
-                }
-                isClickable = true
-                elevation = 20f
-            }
-
-            val title = android.widget.TextView(context).apply {
-                this.text = "Preview Response"
-                textSize = 18f
-                setTextColor(primaryTextColor)
-                setTypeface(null, android.graphics.Typeface.BOLD)
-                setPadding(0, 0, 0, 5) // Reduced padding for hint
-            }
-            card.addView(title)
-
-            val hint = android.widget.TextView(context).apply {
-                this.text = "Long press and drag to select text portion"
-                textSize = 11f
-                setTextColor(discardTextColor)
-                setTypeface(null, android.graphics.Typeface.ITALIC)
-                setPadding(0, 0, 0, 15)
-            }
-            card.addView(hint)
-
-            val scrollView = android.widget.ScrollView(context).apply {
-                layoutParams = android.widget.LinearLayout.LayoutParams(
-                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT, 
-                    0 
-                ).apply { weight = 1f }
-            }
-            // Constrain height
-            scrollView.layoutParams.height = (context.resources.displayMetrics.heightPixels * 0.35).toInt()
-            
-            val contentText = android.widget.TextView(context).apply {
-                this.text = text
-                textSize = 14f
-                setTextColor(secondaryTextColor)
-                setTextIsSelectable(true) // Make text selectable
-            }
-            scrollView.addView(contentText)
-            card.addView(scrollView)
-
-            val btnRow = android.widget.LinearLayout(context).apply {
-                orientation = android.widget.LinearLayout.HORIZONTAL
-                gravity = Gravity.END
-                setPadding(0, 30, 0, 0)
-            }
-
-            fun createButton(label: String, color: Int, onClick: () -> Unit): Button {
-                return Button(context).apply {
-                    this.text = label
-                    setTextColor(color)
-                    setTypeface(null, android.graphics.Typeface.BOLD)
-                    background = android.util.TypedValue().let { tv ->
-                        context.theme.resolveAttribute(android.R.attr.selectableItemBackground, tv, true)
-                        context.resources.getDrawable(tv.resourceId, context.theme)
-                    }
-                    setPadding(15, 20, 15, 20) // Reduced padding to fit 3 buttons
-                    setOnClickListener { onClick() }
-                }
-            }
-
-            val discardBtn = createButton("Discard", discardTextColor) { hidePreviewDialog() }
-            val copyBtn = createButton("Copy", primaryTextColor) {
-                val start = contentText.selectionStart
-                val end = contentText.selectionEnd
-                val min = kotlin.math.min(start, end)
-                val max = kotlin.math.max(start, end)
-
-                val textToCopy = if (min >= 0 && max > min) {
-                    contentText.text.subSequence(min, max).toString()
-                } else {
-                    text
-                }
-
-                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                val clip = android.content.ClipData.newPlainText("TypeAssist AI Response", textToCopy)
-                clipboard.setPrimaryClip(clip)
-                
-                if (min >= 0 && max > min) {
-                    showToast("Copied selection")
-                } else {
-                    showToast("Copied full text")
-                }
-            }
-            val insertBtn = createButton("Insert", insertTextColor) { 
-                onInsert()
-                hidePreviewDialog() 
-            }
-
-            btnRow.addView(discardBtn)
-            btnRow.addView(copyBtn)
-            btnRow.addView(insertBtn)
-            card.addView(btnRow)
-
-            previewView = FrameLayout(context)
-            previewView?.addView(card)
-
-            val rootParams = WindowManager.LayoutParams(
-                (context.resources.displayMetrics.widthPixels * 0.75).toInt(), 
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.CENTER
-            }
-            
-            try { 
-                windowManager?.addView(previewView, rootParams) 
-                // Removed auto-hide to allow reading
-            } catch (e: Exception) {}
-        }
-    }
-    
     fun showToast(message: String) {
         mainHandler.post { Toast.makeText(context, message, Toast.LENGTH_SHORT).show() }
     }
-    
+
     private var snippetSelectionView: FrameLayout? = null
+
+    // Set synchronously on the accessibility thread before mainHandler.post runs, and read from
+    // both that thread and the main thread (via isShowing), so it must be @Volatile.
+    @Volatile
     private var currentSnippetTrigger: String? = null
+
+    val isShowing: Boolean get() = currentSnippetTrigger != null
 
     fun showSnippetSelection(trigger: String, variations: List<String>, isDarkMode: Boolean, onSelected: (String) -> Unit) {
         if (currentSnippetTrigger == trigger) return // Already showing this one
-        
+
         currentSnippetTrigger = trigger
-        onOverlayShown?.invoke()
 
         mainHandler.post {
             removeSnippetSelectionInternal()
 
-            // Material 3 Colors from Theme.kt (Sync with showPreviewDialog)
+            // These intentionally duplicate the Material 3 palette in ui/Theme.kt: this overlay
+            // is a plain WindowManager view drawn outside Compose, so it can't read MaterialTheme
+            // colors. Keep the two in sync when the app theme changes.
             val cardBgColor = if (isDarkMode) 0xFF1C1B1F.toInt() else 0xFFFFFBFE.toInt()
             val primaryTextColor = if (isDarkMode) 0xFF818CF8.toInt() else 0xFF4F46E5.toInt()
             val secondaryTextColor = if (isDarkMode) 0xFFE6E1E5.toInt() else 0xFF1C1B1F.toInt()
@@ -287,13 +76,13 @@ class OverlayManager(private val context: Context) {
                 layoutParams = android.widget.LinearLayout.LayoutParams(
                     android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
                     0
-                ).apply { 
-                    weight = 1f 
+                ).apply {
+                    weight = 1f
                 }
             }
             // Constrain height to 35% of screen like preview dialog
             scrollView.layoutParams.height = (context.resources.displayMetrics.heightPixels * 0.35).toInt()
-            
+
             val list = android.widget.LinearLayout(context).apply {
                 orientation = android.widget.LinearLayout.VERTICAL
             }
@@ -306,7 +95,7 @@ class OverlayManager(private val context: Context) {
                     val outValue = android.util.TypedValue()
                     context.theme.resolveAttribute(android.R.attr.selectableItemBackground, outValue, true)
                     setBackgroundResource(outValue.resourceId)
-                    
+
                     setOnClickListener {
                         onSelected(variation)
                         hideSnippetSelection()
@@ -321,7 +110,7 @@ class OverlayManager(private val context: Context) {
                     ellipsize = android.text.TextUtils.TruncateAt.END
                 }
                 item.addView(content)
-                
+
                 // Divider
                 val divider = android.view.View(context).apply {
                     layoutParams = android.widget.LinearLayout.LayoutParams(
@@ -329,13 +118,13 @@ class OverlayManager(private val context: Context) {
                     )
                     setBackgroundColor(surfaceVariantColor)
                 }
-                
+
                 list.addView(item)
                 list.addView(divider)
             }
             scrollView.addView(list)
             container.addView(scrollView)
-            
+
             val btnRow = android.widget.LinearLayout(context).apply {
                 orientation = android.widget.LinearLayout.HORIZONTAL
                 gravity = Gravity.END
@@ -370,13 +159,19 @@ class OverlayManager(private val context: Context) {
                 gravity = Gravity.CENTER
             }
 
-            try { windowManager?.addView(snippetSelectionView, params) } catch (e: Exception) {}
+            try {
+                windowManager?.addView(snippetSelectionView, params)
+            } catch (e: Exception) {
+                // Reset the flag or isShowing would report a picker that never
+                // appeared, blocking every retry for this trigger.
+                snippetSelectionView = null
+                currentSnippetTrigger = null
+            }
         }
     }
 
     fun hideSnippetSelection() {
         currentSnippetTrigger = null
-        onOverlayHidden?.invoke()
         mainHandler.post {
             removeSnippetSelectionInternal()
         }
@@ -394,9 +189,6 @@ class OverlayManager(private val context: Context) {
     }
 
     fun hideAll() {
-        hideLoading()
-        hideUndoButton()
-        hidePreviewDialog()
         hideSnippetSelection()
     }
 }

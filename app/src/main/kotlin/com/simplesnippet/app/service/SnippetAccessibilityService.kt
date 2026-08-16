@@ -6,516 +6,190 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
+import android.content.res.Configuration
+import android.graphics.BitmapFactory
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
+import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.google.gson.Gson
+import com.simplesnippet.app.MainActivity
 import com.simplesnippet.app.R
-import com.simplesnippet.app.api.AiProvider
-import com.simplesnippet.app.api.CloudflareApiClient
-import com.simplesnippet.app.api.CustomApiClient
-import com.simplesnippet.app.api.GeminiApiClient
-import com.simplesnippet.app.api.LocalLlmClient
 import com.simplesnippet.app.data.AppConfig
-import com.simplesnippet.app.data.HistoryManager
-import okhttp3.*
-import java.util.regex.Pattern
-import android.util.Log
+import com.simplesnippet.app.data.Snippet
+import com.simplesnippet.app.data.SnippetMatcher
+import com.simplesnippet.app.data.createDefaultConfig
+import com.simplesnippet.app.data.normalized
 
+/**
+ * Watches text fields for snippet triggers and expands them in place.
+ */
 class SnippetAccessibilityService : AccessibilityService() {
 
-    private val TAG = "TypeAssistService"
-    @Volatile private var isSnippetSelectionVisible = false
-
     companion object {
-        init {
-            System.loadLibrary("typeassist")
-        }
+        private const val TAG = "SnippetService"
+        private const val NOTIFICATION_ID = 101
+        private const val CHANNEL_ID = "simplesnippet_service"
+
+        const val PREFS_NAME = "simplesnippet_prefs"
+        const val KEY_CONFIG = "config_json"
+        const val KEY_TESTING = "is_testing_active"
+
+        fun isEnabled(context: Context): Boolean =
+            Settings.Secure.getString(
+                context.contentResolver,
+                Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+            )?.contains(context.packageName + "/" + SnippetAccessibilityService::class.java.name) == true
     }
 
-    external fun stringFromJNI(): String
-    external fun loadModel(path: String, useGpu: Boolean): Boolean
-    external fun generateResponseNative(prompt: String, temp: Float, topP: Float, maxTokens: Int): String
-    external fun stopGenerationNative()
-    external fun unloadModel()
-
-    private val client = OkHttpClient()
-    private val geminiApiClient = GeminiApiClient(client)
-    private val cloudflareApiClient = CloudflareApiClient(client)
-    private val customApiClient = CustomApiClient(client)
-    private val localLlmClient = LocalLlmClient(this)
-    
+    private val gson = Gson()
     private lateinit var overlayManager: OverlayManager
-    
-    // -- Undo Cache --
-    private var lastNode: AccessibilityNodeInfo? = null
-    private var originalTextCache: String = ""
-    private var undoCacheTimestamp: Long = 0L
-
-    // -- Debounce --
     private val debounceHandler = Handler(Looper.getMainLooper())
-    private var pendingTriggerRunnable: Runnable? = null
+    @Volatile private var config: AppConfig = createDefaultConfig()
+
+    // SharedPreferences only holds a weak reference to its listener, so this
+    // must be a strong field or the listener is silently garbage collected.
+    private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        Log.d(TAG, "JNI Test: ${stringFromJNI()}")
         overlayManager = OverlayManager(this)
-        overlayManager.onUndoAction = { performUndo() }
-        overlayManager.onOverlayShown = { 
-            Log.d(TAG, "Callback: Overlay Shown")
-            isSnippetSelectionVisible = true 
+        loadConfig()
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == KEY_CONFIG) loadConfig()
         }
-        overlayManager.onOverlayHidden = { 
-            Log.d(TAG, "Callback: Overlay Hidden")
-            isSnippetSelectionVisible = false 
-        }
-        startPersistentNotification()
-        Log.d(TAG, "Service Connected")
+        prefsListener = listener
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        showServiceNotification()
+        Log.d(TAG, "Service connected")
     }
 
-    private fun startPersistentNotification() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val channel = NotificationChannel(
-                    "typeassist_service",
-                    "TypeAssist Service",
-                    NotificationManager.IMPORTANCE_LOW
-                ).apply {
-                    description = "Keeps TypeAssist running in the background"
-                    setShowBadge(false)
-                }
-                val manager = getSystemService(NotificationManager::class.java)
-                manager.createNotificationChannel(channel)
-            }
-
-            val intent = Intent(this, com.simplesnippet.app.MainActivity::class.java)
-            val pendingIntent = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
-
-            val largeIcon = android.graphics.BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher)
-
-            val notification = NotificationCompat.Builder(this, "typeassist_service")
-                .setContentTitle("TypeAssist is Active")
-                .setContentText("Ready to assist with your typing.")
-                .setSmallIcon(R.drawable.ic_notification_monochrome) 
-                .setLargeIcon(largeIcon)
-                .setContentIntent(pendingIntent)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .setOngoing(true)
-                .build()
-
-            startForeground(101, notification)
+    private fun loadConfig() {
+        config = try {
+            gson.fromJson(prefs.getString(KEY_CONFIG, null), AppConfig::class.java)
         } catch (e: Exception) {
-            Log.e(TAG, "Error starting notification", e)
-        }
-    }
-
-    private fun isDarkMode(): Boolean {
-        return (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+            Log.e(TAG, "Failed to parse config", e)
+            null
+        }.normalized()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        if (event == null) return
-
+        // Our own UI is ignored unless the in-app Test Lab is running.
         if (event.packageName?.toString() == packageName) {
-            val prefs = getSharedPreferences("GeminiConfig", Context.MODE_PRIVATE)
-            val isTesting = prefs.getBoolean("is_testing_active", false)
-            if (!isTesting) return
+            if (!prefs.getBoolean(KEY_TESTING, false)) return
         }
 
+        // Refreshing the focused node on window changes keeps stale caches from
+        // making inputNode.text return text that is several keystrokes old.
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-            event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) {
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        ) {
             rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.refresh()
             return
         }
 
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
-            // Skip processing for internal events with no actual changes
-            if (event.addedCount == 0 && event.removedCount == 0) return
+        if (event.eventType != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) return
+        if (event.addedCount == 0 && event.removedCount == 0) return
 
-            Log.d(TAG, "Event: TYPE_VIEW_TEXT_CHANGED | added: ${event.addedCount} | removed: ${event.removedCount} | text: ${event.text}")
-            
-            debounceHandler.removeCallbacksAndMessages(null)
+        debounceHandler.removeCallbacksAndMessages(null)
 
-            val inputNode = event.source ?: rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT) ?: return
-            var currentText = inputNode.text?.toString() ?: ""
-            if (currentText.isEmpty() && event.text.isNotEmpty()) {
-                currentText = event.text.joinToString("")
-            }
-            Log.d(TAG, "Current Text: '$currentText'")
+        val inputNode = event.source
+            ?: rootInActiveWindow?.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            ?: return
+        var currentText = inputNode.text?.toString() ?: ""
+        // Some IMEs report the text only on the event itself, not on the node.
+        if (currentText.isEmpty() && event.text.isNotEmpty()) {
+            currentText = event.text.joinToString("")
+        }
 
-            val prefs = getSharedPreferences("GeminiConfig", Context.MODE_PRIVATE)
-            val configJson = prefs.getString("config_json", null)
-            if (configJson == null) {
-                Log.e(TAG, "config_json is null!")
+        val cfg = config
+        if (!cfg.isAppEnabled) return
+
+        try {
+            // Quick-save runs before expansion on purpose: a save payload that
+            // contains an existing trigger must be saved, not expanded.
+            SnippetMatcher.findSaveCommand(currentText, cfg.saveSnippetPattern)?.let { cmd ->
+                val existing = cfg.snippets.find { it.trigger == cmd.trigger }
+                if (existing != null) {
+                    if (!existing.contents.contains(cmd.content)) existing.contents.add(cmd.content)
+                } else {
+                    cfg.snippets.add(Snippet(cmd.trigger, mutableListOf(cmd.content)))
+                }
+                prefs.edit().putString(KEY_CONFIG, gson.toJson(cfg)).apply()
+                pasteText(inputNode, currentText.replace(cmd.fullMatch, cmd.content))
+                overlayManager.showToast("Snippet '" + cmd.trigger + "' saved!")
                 return
             }
 
-            try {
-                val gson = com.google.gson.GsonBuilder().create()
-                val config = gson.fromJson(configJson, AppConfig::class.java)
-                
-                // Migration: Convert old single content to contents list
-                config.snippets?.forEach { snippet ->
-                    if (snippet.contents == null) snippet.contents = mutableListOf()
-                    if (snippet.content != null && snippet.content.isNotEmpty()) {
-                        if (!snippet.contents.contains(snippet.content)) {
-                            snippet.contents.add(snippet.content)
-                        }
-                        snippet.content = ""
-                    }
+            val match = SnippetMatcher.find(
+                currentText,
+                cfg.snippetTriggerPrefix,
+                cfg.snippets,
+                cfg.allowTriggerAnywhere
+            )
+            if (match == null) {
+                // The trigger was edited away (e.g. backspace) — retire a
+                // variation picker that no longer applies.
+                if (overlayManager.isShowing) overlayManager.hideSnippetSelection()
+                return
+            }
+
+            val fullTrigger = cfg.snippetTriggerPrefix + match.snippet.trigger
+            if (match.variations.size > 1) {
+                overlayManager.showSnippetSelection(
+                    match.snippet.trigger,
+                    match.variations,
+                    isDarkMode()
+                ) { selected ->
+                    replaceTrigger(inputNode, fullTrigger, selected, currentText, cfg.allowTriggerAnywhere)
                 }
-                
-                if (!config.isAppEnabled) {
-                    return
-                }
-
-                // --- 0. Global Inline Transformation ---
-                val globalTriggerPattern = config.globalTriggerPattern
-                if (globalTriggerPattern.contains("%") && globalTriggerPattern.length >= 3) {
-                    val globalRegexStr = buildGlobalTriggerRegex(globalTriggerPattern)
-                    val globalTransformRegex = Pattern.compile(globalRegexStr)
-                    val globalMatcher = globalTransformRegex.matcher(currentText)
-                    if (globalMatcher.find()) {
-                        Log.d(TAG, "Global Trigger Match Found")
-                        val contextText = globalMatcher.group(1) ?: ""
-                        val instruction = globalMatcher.group(2) ?: ""
-
-                        if (contextText.isNotBlank() && instruction.isNotBlank()) {
-                            originalTextCache = currentText
-                            if (config.isHistoryEnabled) HistoryManager.add(originalTextCache)
-                            lastNode = inputNode
-                            undoCacheTimestamp = System.currentTimeMillis()
-
-                            overlayManager.showLoading(config)
-                            overlayManager.hideUndoButton()
-
-                            val systemPrompt = "Rewrite the following text according to this instruction: $instruction. Return ONLY the rewritten text, no explanations, no chat."
-                            
-                        performAICall(config, systemPrompt, contextText) { result ->
-                            overlayManager.hideLoading()
-                            result.onSuccess { aiText ->
-                                processAiResult(config, inputNode, currentText, aiText, replaceWhole = true)
-                            }.onFailure {
-                                overlayManager.showToast(it.message ?: "Unknown error")
-                            }
-                        }
-
-                            return
-                        }
-                    }
-                }
-
-                // -- Snippets Logic --
-                val snippetPrefix = config.snippetTriggerPrefix
-                val saveSnippetPattern = config.saveSnippetPattern
-                val snippets = config.snippets.sortedByDescending { it.trigger.length }
-
-                var matchedAnySnippet = false
-                for (s in snippets) {
-                    val fullTrigger = snippetPrefix + s.trigger
-                    val idx = currentText.lastIndexOf(fullTrigger)
-                    if (idx != -1) {
-                        val isAtEnd = idx + fullTrigger.length == currentText.length
-                        if (config.allowTriggerAnywhere || isAtEnd) {
-                            matchedAnySnippet = true
-                            Log.d(TAG, "Snippet Match: ${s.trigger}, variations: ${s.contents?.size ?: "null"}")
-                            val variations = s.contents?.filter { it.isNotEmpty() } ?: emptyList()
-                            if (variations.size > 1) {
-                                // Show selection overlay
-                                Log.d(TAG, "Showing selection overlay for '${s.trigger}' with ${variations.size} variations")
-                                pendingTriggerRunnable?.let { debounceHandler.removeCallbacks(it) }
-                                overlayManager.showSnippetSelection(s.trigger, variations, isDarkMode()) { selected ->
-                                    Log.d(TAG, "Variation selected: '$selected'")
-                                    if (!inputNode.refresh()) {
-                                        Log.e(TAG, "Could not refresh input node for insertion")
-                                        return@showSnippetSelection
-                                    }
-                                    val prefix = currentText.substring(0, idx)
-                                    val suffix = currentText.substring(idx + fullTrigger.length)
-                                    val newText = prefix + selected + suffix
-                                    pasteText(inputNode, newText)
-                                }
-                                return
-                            } else if (variations.isNotEmpty() || s.content.isNotEmpty()) {
-                                val replacement = if (variations.isNotEmpty()) variations[0] else s.content
-                                Log.d(TAG, "Single variation match. Scheduling auto-replacement for '${s.trigger}'")
-                                val runnable = Runnable {
-                                    if (!inputNode.refresh()) return@Runnable
-                                    val prefix = currentText.substring(0, idx)
-                                    val suffix = currentText.substring(idx + fullTrigger.length)
-                                    val newText = prefix + replacement + suffix
-                                    pasteText(inputNode, newText)
-                                }
-                                pendingTriggerRunnable = runnable
-                                debounceHandler.postDelayed(runnable, config.triggerDebounceMs)
-                                return
-                            }
-                        }
-                    }
-                }
-
-                if (!matchedAnySnippet && !isSnippetSelectionVisible) {
-                    if (overlayManager != null) { 
-                         Log.d(TAG, "No snippet match in current text. Hiding selection overlay.")
-                         overlayManager.hideSnippetSelection()
-                    }
-                }
-
-                // Robust check for saveSnippetPattern
-                if (saveSnippetPattern.split("%").size == 3 && saveSnippetPattern.length >= 5) {
-                    val saveMatcher = Pattern.compile(buildSaveSnippetRegex(saveSnippetPattern)).matcher(currentText)
-                    if (saveMatcher.find()) {
-                        Log.d(TAG, "Save Snippet Match Found")
-                        val fullMatch = saveMatcher.group(0) ?: ""
-                        val newTrigger = saveMatcher.group(1)?.trim() ?: ""
-                        val newContent = saveMatcher.group(2)?.trim() ?: ""
-
-                        if (newTrigger.isNotEmpty() && newContent.isNotEmpty()) {
-                            val existing = config.snippets.find { it.trigger == newTrigger }
-                            if (existing != null) {
-                                if (!existing.contents.contains(newContent)) {
-                                    existing.contents.add(newContent)
-                                }
-                            } else {
-                                config.snippets.add(com.simplesnippet.app.data.Snippet(newTrigger, contents = mutableListOf(newContent)))
-                            }
-                            prefs.edit().putString("config_json", gson.toJson(config)).apply()
-                            val cleanText = currentText.replace(fullMatch, newContent)
-                            pasteText(inputNode, cleanText)
-                            overlayManager.showToast("Snippet '$newTrigger' saved!")
-                            return
-                        }
-                    }
-                }
-
-                // -- Utility Belt --
-                findBalancedCommand(currentText, "(.c:")?.let { (fullMatch, expr) ->
-                    val result = com.simplesnippet.app.utils.UtilityBelt.evaluateMath(expr)
-                    originalTextCache = currentText
-                    if (config.isHistoryEnabled) HistoryManager.add(originalTextCache)
-                    lastNode = inputNode
-                    undoCacheTimestamp = System.currentTimeMillis()
-                    
-                    val idx = currentText.lastIndexOf(fullMatch)
-                    if (idx != -1) {
-                        val prefix = currentText.substring(0, idx)
-                        val suffix = currentText.substring(idx + fullMatch.length)
-                        val newText = prefix + result + suffix
-                        pasteText(inputNode, newText)
-                    }
-                    overlayManager.showUndoButton(config)
-                    return
-                }
-
-                val utilityTriggers = mapOf(
-                    ".now" to { com.simplesnippet.app.utils.UtilityBelt.getTime() },
-                    ".date" to { com.simplesnippet.app.utils.UtilityBelt.getDate() },
-                    ".pass" to { com.simplesnippet.app.utils.UtilityBelt.generatePassword() }
+            } else {
+                debounceHandler.postDelayed(
+                    { replaceTrigger(inputNode, fullTrigger, match.variations[0], currentText, cfg.allowTriggerAnywhere) },
+                    cfg.triggerDebounceMs
                 )
-
-                for ((uTrigger, uAction) in utilityTriggers) {
-                    val idx = currentText.lastIndexOf(uTrigger)
-                    if (idx != -1) {
-                         val isAtEnd = idx + uTrigger.length == currentText.length
-                         if (config.allowTriggerAnywhere || isAtEnd) {
-                             val result = uAction()
-                             originalTextCache = currentText
-                             if (config.isHistoryEnabled) HistoryManager.add(originalTextCache)
-                             lastNode = inputNode
-                             undoCacheTimestamp = System.currentTimeMillis()
-                             
-                             val prefix = currentText.substring(0, idx)
-                             val suffix = currentText.substring(idx + uTrigger.length)
-                             val newText = prefix + result + suffix
-                             
-                             pasteText(inputNode, newText)
-                             overlayManager.showUndoButton(config)
-                             return
-                         }
-                    }
-                }
-
-                val undoCommandPattern = config.undoCommandPattern.trim()
-                val timeSinceCache = System.currentTimeMillis() - undoCacheTimestamp
-                if (currentText.endsWith(undoCommandPattern) && originalTextCache.isNotEmpty() && timeSinceCache < 300000) {
-                    pasteText(inputNode, originalTextCache)
-                    return
-                }
-                
-                val triggers = config.triggers
-                val inlineCommands = config.inlineCommands
-
-                // -- Process Inline Commands --
-                for (inlineCommand in inlineCommands) {
-                    val inlinePattern = inlineCommand.pattern
-                    val inlinePromptTemplate = inlineCommand.prompt
-                    if (inlinePattern.contains("%") && inlinePattern.length >= 3) {
-                        val regexPattern = Pattern.compile(buildRegexFromInlinePattern(inlinePattern))
-                        val matcher = regexPattern.matcher(currentText)
-
-                        if (matcher.find()) {
-                            val fullMatchedString = matcher.group(0) ?: continue
-                            val userPrompt = matcher.group(1) ?: continue
-                            Log.d(TAG, "Inline Command Match: $inlinePattern | User Prompt: $userPrompt")
-
-                            originalTextCache = currentText
-                            if (config.isHistoryEnabled) HistoryManager.add(originalTextCache)
-                            lastNode = inputNode
-
-                            overlayManager.showLoading(config)
-                            overlayManager.hideUndoButton()
-
-                            performAICall(config, inlinePromptTemplate, userPrompt) { result ->
-                                overlayManager.hideLoading()
-                                result.onSuccess { aiText ->
-                                    Log.d(TAG, "AI Success: ${aiText.take(50)}...")
-                                    val newText = currentText.replaceFirst(Pattern.quote(fullMatchedString).toRegex(), aiText)
-                                    processAiResult(config, inputNode, currentText, newText, replaceWhole = true)
-                                }.onFailure {
-                                    Log.e(TAG, "AI Failure: ${it.message}")
-                                    overlayManager.showToast(it.message ?: "Unknown error")
-                                }
-                            }
-                            return
-                        }
-                    }
-                }
-
-                // -- Process Trailing Triggers (Debounced) --
-                for (trigger in triggers) {
-                    val pattern = trigger.pattern
-                    val prompt = trigger.prompt
-
-                    val triggerIndex = findTriggerIndex(currentText, pattern, config.allowTriggerAnywhere, config.ignorePrecedingWhitespace)
-                    if (triggerIndex != -1) {
-                        val textToProcess = currentText.substring(0, triggerIndex).trim()
-                        Log.d(TAG, "Trigger Match: $pattern | Input Text: $textToProcess")
-                        
-                        val suffix = if (currentText.length > triggerIndex + pattern.length) {
-                             currentText.substring(triggerIndex + pattern.length)
-                        } else { "" }
-                        
-                        if (textToProcess.length > 1) {
-                            val runnable = Runnable {
-                                if (!inputNode.refresh()) return@Runnable
-                                originalTextCache = textToProcess
-                                lastNode = inputNode
-                                undoCacheTimestamp = System.currentTimeMillis()
-                                if (config.isHistoryEnabled) HistoryManager.add(originalTextCache)
-
-                                overlayManager.showLoading(config)
-                                overlayManager.hideUndoButton() 
-
-                                performAICall(config, prompt, textToProcess) { result ->
-                                    overlayManager.hideLoading()
-                                    result.onSuccess { aiText ->
-                                        Log.d(TAG, "AI Success: ${aiText.take(50)}...")
-                                        val finalText = aiText + suffix
-                                        processAiResult(config, inputNode, null, finalText, replaceWhole = true)
-                                    }.onFailure {
-                                        Log.e(TAG, "AI Failure: ${it.message}")
-                                        overlayManager.showToast(it.message ?: "Unknown error")
-                                    }
-                                }
-                            }
-                            pendingTriggerRunnable = runnable
-                            debounceHandler.postDelayed(runnable, config.triggerDebounceMs)
-                        }
-                        return
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Error in onAccessibilityEvent", e)
             }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling text change", e)
         }
     }
 
-    private fun processAiResult(config: AppConfig, node: AccessibilityNodeInfo, currentText: String?, aiText: String, replaceWhole: Boolean) {
-        val cleanedText = cleanAiText(aiText)
-
-        if (cleanedText.isBlank()) {
-            Log.w(TAG, "AI returned empty result after cleaning. Raw length=${aiText.length}")
-            overlayManager.showToast("Model returned empty output — try a smarter model or increase max tokens")
-            return
-        }
-
-        val nightModeFlags = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK
-        val isDarkMode = nightModeFlags == android.content.res.Configuration.UI_MODE_NIGHT_YES
-        val wordCount = cleanedText.split("\\s+".toRegex()).size
-
-        if (wordCount > 15 && config.enablePreviewDialog) {
-            overlayManager.showPreviewDialog(cleanedText, isDarkMode) {
-                pasteText(node, cleanedText)
-                overlayManager.showUndoButton(config)
-            }
-        } else {
-            pasteText(node, cleanedText)
-            overlayManager.showUndoButton(config)
-        }
-    }
-
-    private fun cleanAiText(text: String): String {
-        var result = text.trim()
-
-        // Remove surrounding pipe signs if present
-        if (result.startsWith("|") && result.endsWith("|")) {
-            result = result.substring(1, result.length - 1).trim()
-        }
-
-        // Remove surrounding quotes if present
-        if ((result.startsWith("\"") && result.endsWith("\"")) ||
-            (result.startsWith("'") && result.endsWith("'"))) {
-            result = result.substring(1, result.length - 1).trim()
-        }
-
-        return result
-    }
-
-    private fun performAICall(config: AppConfig, prompt: String, userText: String, callback: (Result<String>) -> Unit) {
-        Log.d(TAG, "Performing AI Call: Provider=${config.provider}, Timeout=${config.apiTimeoutSeconds}s")
-        val provider: AiProvider = when (config.provider) {
-            "cloudflare" -> cloudflareApiClient
-            "custom" -> customApiClient
-            "local" -> localLlmClient
-            else -> geminiApiClient
-        }
-        provider.generateResponse(prompt, userText, config, callback)
-    }
-
-    private fun findTriggerIndex(text: String, trigger: String, allowAnywhere: Boolean, ignoreWhitespace: Boolean): Int {
-        if (!allowAnywhere) {
-            if (!text.endsWith(trigger)) return -1
-            val triggerStartIndex = text.length - trigger.length
-            if (!ignoreWhitespace && triggerStartIndex > 0 && !text[triggerStartIndex - 1].isWhitespace()) return -1
-            return triggerStartIndex
-        }
-
-        var idx = text.lastIndexOf(trigger)
-        while (idx != -1) {
-            val startOk = ignoreWhitespace || (idx == 0) || text[idx - 1].isWhitespace()
-            val endIdx = idx + trigger.length
-            val endOk = (endIdx == text.length) || text[endIdx].isWhitespace()
-            
-            if (startOk && endOk) return idx
-            
-            idx = text.lastIndexOf(trigger, idx - 1)
-        }
-        return -1
-    }
-
-    private fun performUndo() {
-        val timeSinceCache = System.currentTimeMillis() - undoCacheTimestamp
-        if (lastNode != null && originalTextCache.isNotEmpty() && timeSinceCache < 300000) {
-            if (lastNode!!.refresh()) {
-                pasteText(lastNode!!, originalTextCache)
-                overlayManager.showToast("Undone!")
-            }
-        }
-        overlayManager.hideUndoButton()
+    /**
+     * Re-reads the node before splicing: the text captured when the trigger was
+     * detected is stale by the time the debounce fires or the user picks a
+     * variation, and splicing on it would clobber whatever was typed since.
+     *
+     * [capturedText] is the event-time text, used as a fallback for apps whose
+     * nodes report empty text (detection has the same fallback via event.text —
+     * without it those apps would detect the trigger but never expand it).
+     */
+    private fun replaceTrigger(
+        node: AccessibilityNodeInfo,
+        fullTrigger: String,
+        replacement: String,
+        capturedText: String,
+        allowAnywhere: Boolean
+    ) {
+        if (!node.refresh()) return
+        val freshText = node.text?.toString()?.takeIf { it.isNotEmpty() } ?: capturedText
+        val idx = freshText.lastIndexOf(fullTrigger)
+        if (idx == -1) return
+        // Re-apply the end-of-text anchor that SnippetMatcher.find enforced at
+        // detection time — the field may have changed since.
+        if (!allowAnywhere && idx + fullTrigger.length != freshText.length) return
+        pasteText(
+            node,
+            freshText.substring(0, idx) + replacement + freshText.substring(idx + fullTrigger.length)
+        )
     }
 
     private fun pasteText(node: AccessibilityNodeInfo, text: String) {
@@ -524,49 +198,58 @@ class SnippetAccessibilityService : AccessibilityService() {
         node.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments)
     }
 
-    private fun buildRegexFromInlinePattern(inlinePattern: String): String {
-        return Pattern.quote(inlinePattern).replace("%", "\\E(.+?)\\Q").replace("\\Q\\E", "")
+    private fun isDarkMode(): Boolean {
+        return (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
     }
 
-    private fun buildSaveSnippetRegex(pattern: String): String {
-        val parts = pattern.split("%", limit = 3)
-        if (parts.size != 3) return Pattern.quote(pattern)
-        return Pattern.quote(parts[0]) + "(.+?)" + Pattern.quote(parts[1]) + "(.+?)" + Pattern.quote(parts[2])
-    }
-
-    private fun findBalancedCommand(text: String, startPattern: String): Pair<String, String>? {
-        val startIndex = text.lastIndexOf(startPattern)
-        if (startIndex == -1) return null
-        val contentStartIndex = startIndex + startPattern.length
-        var balance = 0
-        var endIndex = -1
-        for (i in contentStartIndex until text.length) {
-            when (text[i]) {
-                '(' -> balance++
-                ')' -> { if (balance == 0) { endIndex = i; break }; balance-- }
+    private fun showServiceNotification() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val channel = NotificationChannel(
+                    CHANNEL_ID,
+                    "SimpleSnippet",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "Shows while snippet expansion is active"
+                    setShowBadge(false)
+                }
+                getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
             }
+
+            val intent = Intent(this, MainActivity::class.java)
+            val pendingIntent =
+                PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_IMMUTABLE)
+
+            val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle("SimpleSnippet is active")
+                .setContentText("Watching for snippet triggers.")
+                .setSmallIcon(R.drawable.ic_notification_monochrome)
+                .setLargeIcon(BitmapFactory.decodeResource(resources, R.mipmap.ic_launcher))
+                .setContentIntent(pendingIntent)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .build()
+
+            // Posted as a plain notification, never via startForeground: this app
+            // targets SDK 35, and on API 34+ startForeground without a declared
+            // foregroundServiceType throws — which is why the old foreground
+            // notification never appeared on modern devices.
+            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error posting service notification", e)
         }
-        if (endIndex != -1) return Pair(text.substring(startIndex, endIndex + 1), text.substring(contentStartIndex, endIndex))
-        return null
     }
 
-    private fun buildGlobalTriggerRegex(pattern: String): String {
-        val parts = pattern.split("%", limit = 2)
-        if (parts.size != 2) return "(?s)(.*)\\Q${pattern}\\E\\s*$"
-        return "(?s)(.*)" + Pattern.quote(parts[0]) + "(.+?)" + Pattern.quote(parts[1]) + "\\s*$"
-    }
-
-    override fun onInterrupt() { overlayManager.hideAll() }
-
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
+    override fun onInterrupt() {
+        if (::overlayManager.isInitialized) overlayManager.hideAll()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        unloadModel()
-        if (::overlayManager.isInitialized) {
-            overlayManager.hideAll()
-        }
+        prefsListener?.let { prefs.unregisterOnSharedPreferenceChangeListener(it) }
+        prefsListener = null
+        NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID)
+        if (::overlayManager.isInitialized) overlayManager.hideAll()
     }
 }
