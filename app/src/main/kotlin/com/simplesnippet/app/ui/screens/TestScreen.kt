@@ -6,7 +6,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,12 +33,12 @@ fun TestScreen(onStartTest: () -> Unit, onStopTest: () -> Unit, onBack: () -> Un
     DisposableEffect(Unit) { onStartTest(); onDispose { onStopTest() } }
 
     val presets = listOf(
-        "What is the capital of Bangladesh? .ta",
-        "Sp3ll1ng and gr@mm3r mistake shall be fixing .g",
-        "এটি একটি এআই ভিত্তিক অ্যাপ। .tr"
+        "My address is ..email",
+        "..sign",
+        "(.save:ph:+1 555 0199)"
     )
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Test Lab") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface, titleContentColor = MaterialTheme.colorScheme.primary, navigationIconContentColor = MaterialTheme.colorScheme.primary)) }) { p ->
+    Scaffold(topBar = { TopAppBar(title = { Text("Test Lab") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } }, colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface, titleContentColor = MaterialTheme.colorScheme.primary, navigationIconContentColor = MaterialTheme.colorScheme.primary)) }) { p ->
         Column(modifier = Modifier.padding(p).padding(16.dp).verticalScroll(rememberScrollState())) {
             Text("The Accessibility Service is active here.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, modifier = Modifier.padding(bottom=8.dp))
             OutlinedTextField(value = t, onValueChange = { t=it }, label = { Text("Type or tap a preset...") }, modifier = Modifier.fillMaxWidth().height(150.dp))

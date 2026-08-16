@@ -21,9 +21,9 @@ import kotlinx.coroutines.delay
 @Composable
 fun TypingAnimationPreview() {
     val scenarios = listOf(
-        Pair("Capital of France? .ta", "Paris"),
-        Pair("i go home yestarday .g", "I went home yesterday."),
-        Pair("你好世界 .tr", "Hello World")
+        Pair("My address is ..email", "My address is user@example.com"),
+        Pair("..sign", "Best regards,\nUser"),
+        Pair("(.save:ph:+1 555 0199)", "+1 555 0199")
     )
     
     var currentScenarioIndex by remember { mutableStateOf(0) }
@@ -56,9 +56,9 @@ fun TypingAnimationPreview() {
             }
             delay(500)
 
-            // 3. Thinking (Trigger activated)
+            // 3. Trigger activated
             isThinking = true
-            delay(1500) // Simulated network delay
+            delay(600) // Brief pause, mirroring the expansion debounce
 
             // 4. Show Answer
             isThinking = false
@@ -89,7 +89,7 @@ fun TypingAnimationPreview() {
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text = "AI is thinking...",
+                    text = "Expanding…",
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold
                 )

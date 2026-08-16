@@ -31,7 +31,12 @@ object XiaomiUtils {
             val result = method.invoke(appOps, op, Process.myUid(), context.packageName) as Int
             result == AppOpsManager.MODE_ALLOWED
         } catch (e: Exception) {
-            Settings.canDrawOverlays(context)
+            // The MIUI AppOps probe is reflection on a hidden API; when it
+            // fails, assume granted. (The old fallback, canDrawOverlays, can
+            // never be true now that SYSTEM_ALERT_WINDOW is not declared — the
+            // picker uses TYPE_ACCESSIBILITY_OVERLAY instead — and it would
+            // permanently gate the permissions screen on such devices.)
+            true
         }
     }
 

@@ -1,101 +1,33 @@
 package com.simplesnippet.app
 
-import android.content.Context
 import android.os.Bundle
-import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import androidx.core.view.WindowCompat
-import androidx.lifecycle.lifecycleScope
-import com.google.gson.Gson
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.simplesnippet.app.service.SnippetAccessibilityService
 import com.simplesnippet.app.ui.AppTheme
 import com.simplesnippet.app.ui.SimpleSnippetApp
-import com.simplesnippet.app.ui.components.UpdateDialog
-import com.simplesnippet.app.data.model.GitHubRelease
-import com.simplesnippet.app.data.repository.UpdateRepository
-import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
 
 class MainActivity : ComponentActivity() {
-    
-    private val client = OkHttpClient()
-    private var updateInfoState by mutableStateOf<GitHubRelease?>(null)
-    private lateinit var updateRepository: UpdateRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        
-        updateRepository = UpdateRepository(this)
 
-        if (BuildConfig.SHOW_UPDATES) {
-            loadCachedUpdateInfo()
-            checkForUpdates()
-        }
+        // The Test Lab flag is normally cleared when its screen disposes, but a
+        // process death while it is open would leave it stuck on — reset it here
+        // so the service never keeps reacting to the app's own text fields.
+        getSharedPreferences(SnippetAccessibilityService.PREFS_NAME, MODE_PRIVATE)
+            .edit().putBoolean(SnippetAccessibilityService.KEY_TESTING, false).apply()
 
         setContent {
             AppTheme {
-                SimpleSnippetApp(client, updateInfo = updateInfoState)
-                
-                updateInfoState?.let { update ->
-                    UpdateDialog(release = update, onDismiss = { updateInfoState = null })
-                }
+                SimpleSnippetApp()
             }
         }
     }
 
-    private fun loadCachedUpdateInfo() {
-        val prefs = getSharedPreferences("UpdateInfo", Context.MODE_PRIVATE)
-        
-        // Migration: Clear old update info key if it exists
-        if (prefs.contains("update_json")) {
-            prefs.edit().remove("update_json").apply()
-        }
-
-        val json = prefs.getString("github_release_json", null)
-        if (json != null) {
-            try {
-                val info = Gson().fromJson(json, GitHubRelease::class.java)
-                // Safety: Ensure critical fields aren't null (Gson bypasses Kotlin nullability)
-                if (info.tagName != null && info.htmlUrl != null) {
-                    updateInfoState = info
-                }
-            } catch (e: Exception) {
-                prefs.edit().remove("github_release_json").apply()
-            }
-        }
-    }
-    
-    private fun checkForUpdates() {
-        lifecycleScope.launch {
-            val result = updateRepository.checkForUpdate("estiaksoyeb", "TypeAssist")
-            val prefs = getSharedPreferences("UpdateInfo", Context.MODE_PRIVATE)
-            
-            result.onSuccess { release ->
-                if (release != null) {
-                    // Valid new update found
-                    prefs.edit().putString("github_release_json", Gson().toJson(release)).apply()
-                    updateInfoState = release
-                } else {
-                    // No update available
-                    prefs.edit().remove("github_release_json").apply()
-                    updateInfoState = null
-                }
-            }.onFailure {
-                // Keep cached info if network fails
-            }
-        }
-    }
-    
-    fun isAccessibilityEnabled(): Boolean {
-        val prefString = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-        return prefString?.contains("$packageName/com.simplesnippet.app.service.SnippetAccessibilityService") == true
-    }
+    fun isAccessibilityEnabled(): Boolean = SnippetAccessibilityService.isEnabled(this)
 }

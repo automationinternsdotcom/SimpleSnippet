@@ -1,9 +1,6 @@
 package com.simplesnippet.app.ui
 
 import android.content.Context
-import android.content.Intent
-import android.provider.Settings
-import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalAnimationApi
@@ -17,56 +14,65 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.google.gson.GsonBuilder
-import com.simplesnippet.app.MainActivity
 import com.simplesnippet.app.data.AppConfig
-import com.simplesnippet.app.data.createDefaultConfig
-import com.simplesnippet.app.data.model.GitHubRelease
+import com.simplesnippet.app.data.normalized
+import com.simplesnippet.app.service.SnippetAccessibilityService
 import com.simplesnippet.app.ui.screens.*
-import okhttp3.OkHttpClient
 
 @OptIn(ExperimentalAnimationApi::class)
 @Composable
-fun SimpleSnippetApp(client: OkHttpClient, updateInfo: GitHubRelease?) {
+fun SimpleSnippetApp() {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val gson = GsonBuilder().setPrettyPrinting().create()
-    val prefs = context.getSharedPreferences("GeminiConfig", Context.MODE_PRIVATE)
+    val prefs = context.getSharedPreferences(
+        SnippetAccessibilityService.PREFS_NAME,
+        Context.MODE_PRIVATE
+    )
+
+    fun loadConfig(): AppConfig = try {
+        gson.fromJson(
+            prefs.getString(SnippetAccessibilityService.KEY_CONFIG, null),
+            AppConfig::class.java
+        )
+    } catch (e: Exception) {
+        null
+    }.normalized()
 
     // Determine initial screen
     val hasSeenOnboarding = prefs.getBoolean("has_seen_onboarding", false)
-    var currentScreen by rememberSaveable { mutableStateOf(if (hasSeenOnboarding) "home" else "welcome") }
-    var previousScreen by rememberSaveable { mutableStateOf("home") } // Track previous screen for animation
+    var currentScreen by rememberSaveable { mutableStateOf(if (hasSeenOnboarding) "snippets" else "welcome") }
+    var previousScreen by rememberSaveable { mutableStateOf("snippets") } // Track previous screen for animation
 
-    var config by remember(currentScreen) { 
-        mutableStateOf(try {
-            val json = prefs.getString("config_json", null)
-            if (json != null) {
-                val loadedConfig = gson.fromJson(json, AppConfig::class.java)
-                // Handle missing fields from older versions
-                if (loadedConfig.savedCustomConfigs == null) {
-                    loadedConfig.savedCustomConfigs = mutableListOf()
-                }
-                if (loadedConfig.snippets == null) {
-                    loadedConfig.snippets = mutableListOf()
-                }
-                // Migration: Convert old single content to contents list
-                loadedConfig.snippets?.forEach { snippet ->
-                    if (snippet.contents == null) snippet.contents = mutableListOf()
-                    if (snippet.content != null && snippet.content!!.isNotEmpty()) {
-                        if (!snippet.contents.contains(snippet.content!!)) {
-                            snippet.contents.add(snippet.content!!)
-                        }
-                        snippet.content = ""
-                    }
-                }
-                loadedConfig
-            } else createDefaultConfig()
-        } catch (e: Exception) { createDefaultConfig() })
+    // A single state instance for the whole composition: keying remember on
+    // currentScreen would discard it on navigation, leaving the lifecycle
+    // observer below writing into a dead MutableState.
+    var config by remember { mutableStateOf(loadConfig()) }
+
+    // Re-read the config whenever we navigate to a different screen
+    LaunchedEffect(currentScreen) {
+        config = loadConfig()
+    }
+
+    // Reload on resume: picks up snippets quick-saved by the accessibility
+    // service while the app was backgrounded.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                config = loadConfig()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     fun saveConfig(newConfig: AppConfig) {
         config = newConfig
-        prefs.edit().putString("config_json", gson.toJson(newConfig)).apply()
+        prefs.edit().putString(SnippetAccessibilityService.KEY_CONFIG, gson.toJson(newConfig)).apply()
     }
 
     // Custom navigate function to track previous screen
@@ -75,11 +81,11 @@ fun SimpleSnippetApp(client: OkHttpClient, updateInfo: GitHubRelease?) {
         currentScreen = screen
     }
 
-    BackHandler(enabled = currentScreen != "home" && currentScreen != "welcome") {
-        if (currentScreen == "library") {
-            navigateTo("commands")
-        } else {
-            navigateTo("home")
+    BackHandler(enabled = currentScreen != "snippets" && currentScreen != "welcome") {
+        when (currentScreen) {
+            "permissions" -> navigateTo("settings")
+            "test" -> navigateTo("settings")
+            else -> navigateTo("snippets")
         }
     }
 
@@ -89,10 +95,9 @@ fun SimpleSnippetApp(client: OkHttpClient, updateInfo: GitHubRelease?) {
             label = "Screen Animation",
             transitionSpec = {
                 // Logic to determine if it's a "back" animation
-                val isBackTransition = (targetState == "home" && previousScreen != "home") ||
-                                       (targetState == "commands" && previousScreen == "library") ||
-                                       (targetState == "settings" && previousScreen == "permissions")
-                
+                val isBackTransition = (targetState == "snippets" && previousScreen != "snippets") ||
+                                       (targetState == "settings" && (previousScreen == "permissions" || previousScreen == "test"))
+
                 if (isBackTransition) {
                     slideInHorizontally { fullWidth -> -fullWidth } togetherWith // New screen from left
                     slideOutHorizontally { fullWidth -> fullWidth } // Old screen to right
@@ -102,52 +107,32 @@ fun SimpleSnippetApp(client: OkHttpClient, updateInfo: GitHubRelease?) {
                 }
             }
         ) { screen ->
-            val route = screen.substringBefore(":")
-            when (route) {
+            when (screen) {
                 "welcome" -> WelcomeScreen(
                     onFinished = {
                         prefs.edit().putBoolean("has_seen_onboarding", true).apply()
-                        navigateTo("home")
+                        navigateTo("snippets")
                     }
                 )
+                "snippets" -> SnippetsScreen(
+                    config = config,
+                    onSave = { saveConfig(it) },
+                    onNavigate = { navigateTo(it) }
+                )
+                "settings" -> SettingsScreen(
+                    config = config,
+                    onSave = { saveConfig(it) },
+                    onBack = { navigateTo("snippets") },
+                    onNavigate = { navigateTo(it) }
+                )
                 "permissions" -> PermissionsScreen(
-                    onFinished = { navigateTo("settings:0") },
+                    onFinished = { navigateTo("settings") },
                     isStandalone = true
                 )
-                "home" -> HomeScreen(
-                    config = config,
-                    context = context,
-                    updateInfo = updateInfo, // Pass updateInfo down
-                    onToggle = { newState -> 
-                        saveConfig(config.copy(isAppEnabled = newState)) 
-                    },
-                    onNavigate = { navigateTo(it) } // Use custom navigate
-                )
-                "commands" -> CommandsScreen(config, { saveConfig(it) }, { navigateTo("home") }, onNavigateLibrary = { navigateTo("library") })
-                "library" -> CommandLibraryScreen(config, { saveConfig(it) }, { navigateTo("commands") })
-                "settings" -> {
-                    val tab = try { screen.split(":")[1].toInt() } catch (e: Exception) { 0 }
-                    SettingsScreen(
-                        config = config,
-                        client = client,
-                        onSave = { saveConfig(it) },
-                        onBack = { navigateTo("home") },
-                        onNavigate = { navigateTo(it) },
-                        initialTab = tab
-                    )
-                }
-                "json" -> JsonScreen(config, { saveConfig(it) }, { navigateTo("home") }) // Use custom navigate
-                "history" -> HistoryScreen({ navigateTo("home") }) // Use custom navigate
-                "snippets" -> SnippetsScreen(config, { saveConfig(it) }, { navigateTo("home") })
-                "guide" -> GuideScreen({ navigateTo("home") })
-                "did_you_know" -> DidYouKnowScreen(onFinished = {
-                    prefs.edit().putInt("did_you_know_version", 2).apply()
-                    navigateTo("home")
-                })
                 "test" -> TestScreen(
-                    onStartTest = { prefs.edit().putBoolean("is_testing_active", true).apply() },
-                    onStopTest = { prefs.edit().putBoolean("is_testing_active", false).apply() },
-                    onBack = { navigateTo("home") } // Use custom navigate
+                    onStartTest = { prefs.edit().putBoolean(SnippetAccessibilityService.KEY_TESTING, true).apply() },
+                    onStopTest = { prefs.edit().putBoolean(SnippetAccessibilityService.KEY_TESTING, false).apply() },
+                    onBack = { navigateTo("settings") }
                 )
             }
         }

@@ -100,7 +100,7 @@ fun WelcomeContent(onNext: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Text(
-                text = "TypeAssist",
+                text = "SimpleSnippet",
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary
@@ -112,7 +112,7 @@ fun WelcomeContent(onNext: () -> Unit) {
 
         // 3. Explanation
         Text(
-            text = "Type anywhere, add a trigger, and let AI handle the rest.",
+            text = "Type a shortcut in any app and watch it expand into your saved text.",
             textAlign = TextAlign.Center,
             fontSize = 16.sp,
             color = MaterialTheme.colorScheme.onSurface,

@@ -1,6 +1,6 @@
 package com.simplesnippet.app.ui.screens
 
-import android.app.Activity
+import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -9,44 +9,61 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sort
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.simplesnippet.app.data.AppConfig
 import com.simplesnippet.app.data.Snippet
+import com.simplesnippet.app.service.SnippetAccessibilityService
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onBack: () -> Unit) {
+fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onNavigate: (String) -> Unit) {
     var showEditDialog by remember { mutableStateOf(false) }
     var tTrigger by remember { mutableStateOf("") }
     var tContents by remember { mutableStateOf(mutableStateListOf<String>()) }
-    
+
     var originalTrigger by remember { mutableStateOf<String?>(null) }
     var snippetToDelete by remember { mutableStateOf<Snippet?>(null) }
-    
+
     var searchQuery by remember { mutableStateOf("") }
     var isSortAlphabetical by remember { mutableStateOf(false) }
-    
+
     val snippets = config.snippets ?: mutableListOf()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    var hasPermission by remember { mutableStateOf(false) }
+
+    DisposableEffect(lifecycleOwner) {
+        hasPermission = SnippetAccessibilityService.isEnabled(context)
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasPermission = SnippetAccessibilityService.isEnabled(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val filteredSnippets = remember(snippets, searchQuery, isSortAlphabetical) {
         val filtered = snippets.filter { s ->
-            s.trigger.contains(searchQuery, ignoreCase = true) || 
+            s.trigger.contains(searchQuery, ignoreCase = true) ||
             s.contents.any { it.contains(searchQuery, ignoreCase = true) }
         }
         if (isSortAlphabetical) {
@@ -56,14 +73,10 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onBack: () ->
         }
     }
 
-    val view = LocalView.current
-    val primaryColor = MaterialTheme.colorScheme.primary
-
     Scaffold(
-        topBar = { 
+        topBar = {
             TopAppBar(
-                title = { Text("Snippets") }, 
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") } },
+                title = { Text("SimpleSnippet") },
                 actions = {
                     IconButton(onClick = { isSortAlphabetical = !isSortAlphabetical }) {
                         Icon(
@@ -72,27 +85,91 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onBack: () ->
                             tint = if (isSortAlphabetical) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    IconButton(onClick = { onNavigate("settings") }) {
+                        Icon(Icons.Default.Settings, contentDescription = "Settings")
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface, titleContentColor = MaterialTheme.colorScheme.primary, navigationIconContentColor = MaterialTheme.colorScheme.primary)
-            ) 
+            )
         },
         floatingActionButtonPosition = FabPosition.Center,
-        floatingActionButton = { 
+        floatingActionButton = {
             FloatingActionButton(
-                onClick = { 
+                onClick = {
                     tTrigger = ""
                     tContents.clear()
                     tContents.add("")
                     originalTrigger = null
-                    showEditDialog = true 
-                }, 
+                    showEditDialog = true
+                },
                 containerColor = MaterialTheme.colorScheme.primary
-            ) { 
-                Icon(Icons.Default.Add, "Add New Snippet") 
-            } 
+            ) {
+                Icon(Icons.Default.Add, "Add New Snippet")
+            }
         }
     ) { p ->
         Column(modifier = Modifier.padding(p)) {
+            if (!hasPermission) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = 16.dp)
+                        .clickable {
+                            context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Spacer(Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Accessibility service is off", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onErrorContainer)
+                            Text("Tap to enable SimpleSnippet in Accessibility settings.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onErrorContainer)
+                        }
+                    }
+                }
+            }
+
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(2.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Snippet expansion", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
+                        Text(
+                            if (config.isAppEnabled && hasPermission) "Expanding as you type" else "Paused",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = config.isAppEnabled,
+                        onCheckedChange = { checked ->
+                            if (checked && !hasPermission) {
+                                Toast.makeText(context, "Enable the Accessibility Service first", Toast.LENGTH_SHORT).show()
+                                context.startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                            } else {
+                                onSave(config.copy(isAppEnabled = checked))
+                            }
+                        }
+                    )
+                }
+            }
+
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
                 modifier = Modifier.fillMaxWidth().padding(16.dp)
@@ -102,7 +179,8 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onBack: () ->
                     Text("Type '${config.snippetTriggerPrefix}' + Trigger Name to expand.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
                     Spacer(Modifier.height(4.dp))
                     Text("Quick Save:", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                    Text("Type '(.save:name:content)' to save instantly.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    val saveExample = config.saveSnippetPattern.replaceFirst("%", "name").replaceFirst("%", "content")
+                    Text("Type '$saveExample' to save instantly.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
                 }
             }
 
@@ -131,28 +209,28 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onBack: () ->
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = 8.dp)
-                            .clickable { 
+                            .clickable {
                                 tTrigger = s.trigger
                                 tContents.clear()
                                 tContents.addAll(s.contents)
                                 if (tContents.isEmpty()) tContents.add("")
                                 originalTrigger = s.trigger
-                                showEditDialog = true 
-                            }, 
+                                showEditDialog = true
+                            },
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         elevation = CardDefaults.cardElevation(2.dp)
                     ) {
                         Row(
-                            modifier = Modifier.padding(16.dp), 
+                            modifier = Modifier.padding(16.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) { 
+                            Column(modifier = Modifier.weight(1f)) {
                                 Text(s.trigger, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 16.sp)
                                 val subText = if (s.contents.size > 1) "${s.contents.size} variations" else if (s.contents.isNotEmpty()) s.contents[0] else ""
-                                Text(subText, maxLines = 1, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) 
+                                Text(subText, maxLines = 1, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            IconButton(onClick = { snippetToDelete = s }) { 
-                                Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error) 
+                            IconButton(onClick = { snippetToDelete = s }) {
+                                Icon(Icons.Default.Delete, "Delete", tint = MaterialTheme.colorScheme.error)
                             }
                         }
                     }
@@ -168,15 +246,15 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onBack: () ->
                 text = {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         OutlinedTextField(
-                            value = tTrigger, 
-                            onValueChange = { tTrigger = it }, 
+                            value = tTrigger,
+                            onValueChange = { tTrigger = it },
                             label = { Text("Trigger Name (e.g. email)") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(16.dp))
                         Text("Variations:", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        
+
                         Box(modifier = Modifier.weight(1f, fill = false).heightIn(max = 300.dp)) {
                             LazyColumn {
                                 itemsIndexed(tContents.toList()) { index, content ->
@@ -231,8 +309,8 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onBack: () ->
                         }
                     }) { Text("Save") }
                 },
-                dismissButton = { 
-                    TextButton(onClick = { showEditDialog = false }) { Text("Cancel") } 
+                dismissButton = {
+                    TextButton(onClick = { showEditDialog = false }) { Text("Cancel") }
                 }
             )
         }
@@ -253,8 +331,8 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onBack: () ->
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                     ) { Text("Delete") }
                 },
-                dismissButton = { 
-                    TextButton(onClick = { snippetToDelete = null }) { Text("Cancel") } 
+                dismissButton = {
+                    TextButton(onClick = { snippetToDelete = null }) { Text("Cancel") }
                 }
             )
         }

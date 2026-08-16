@@ -8,6 +8,8 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -34,6 +36,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.simplesnippet.app.service.SnippetAccessibilityService
 import com.simplesnippet.app.utils.XiaomiUtils
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,11 +57,15 @@ fun PermissionsScreen(
     var isXiaomiBgStartEnabled by remember { mutableStateOf(false) } 
     
     var showSkipDialog by remember { mutableStateOf(false) }
+    var notificationsRequested by remember { mutableStateOf(false) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> isNotificationsEnabled = granted }
 
     fun checkPermissions() {
         // Accessibility Check
-        val prefString = Settings.Secure.getString(context.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
-        isAccessibilityEnabled = prefString?.contains("${context.packageName}/com.simplesnippet.app.service.SnippetAccessibilityService") == true
+        isAccessibilityEnabled = SnippetAccessibilityService.isEnabled(context)
 
         // Notification Check (Android 13+)
         isNotificationsEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -125,7 +132,7 @@ fun PermissionsScreen(
                 Spacer(modifier = Modifier.height(8.dp))
             }
         Text(
-            text = "TypeAssist works best with these permissions.",
+            text = "SimpleSnippet works best with these permissions.",
             fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -167,13 +174,21 @@ fun PermissionsScreen(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 PermissionToggle(
                     title = "Notifications",
-                    description = "Required to keep the service running.",
+                    description = "Optional — shows a status notification while expansion is active.",
                     isGranted = isNotificationsEnabled,
-                    onClick = { 
-                        val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
-                            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    onClick = {
+                        // First tap asks via the system dialog; if that was
+                        // declined (or suppressed), later taps deep-link to the
+                        // app's notification settings instead.
+                        if (!notificationsRequested) {
+                            notificationsRequested = true
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            val intent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            }
+                            context.startActivity(intent)
                         }
-                        context.startActivity(intent)
                     }
                 )
                 Spacer(modifier = Modifier.height(12.dp))
@@ -210,28 +225,41 @@ fun PermissionsScreen(
 
         Button(
             onClick = {
-                if (recommendedGranted) {
+                // Never a dead end: onboarding has no back gesture and no pager
+                // swipe, so the button must always work — missing permissions go
+                // through the confirmation dialog instead of disabling it.
+                if (requiredGranted && recommendedGranted) {
                     onFinished()
                 } else {
                     showSkipDialog = true
                 }
             },
-            enabled = requiredGranted,
             modifier = Modifier.fillMaxWidth().height(50.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = MaterialTheme.colorScheme.primary,
                 disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant
             )
         ) {
-            Text(if (isStandalone) "Back to Settings" else "Get Started")
+            Text(
+                if (isStandalone) "Back to Settings"
+                else if (requiredGranted) "Get Started"
+                else "Set Up Later"
+            )
         }
     } }
     
     if (showSkipDialog) {
         AlertDialog(
             onDismissRequest = { showSkipDialog = false },
-            title = { Text("Skip Stability Settings?") },
-            text = { Text("Without these permissions, TypeAssist may stop working unexpectedly.\n\nIf the app doesn't work then you have to grant permission.") },
+            title = { Text(if (requiredGranted) "Skip Stability Settings?" else "Continue Without Setup?") },
+            text = {
+                Text(
+                    if (requiredGranted)
+                        "Without these permissions, SimpleSnippet may stop working unexpectedly.\n\nIf the app doesn't work then you have to grant permission."
+                    else
+                        "SimpleSnippet needs the Accessibility Service to expand snippets — nothing will expand until it is enabled.\n\nYou can finish setup any time from Settings → Permissions."
+                )
+            },
             confirmButton = {
                 Button(
                     onClick = {
