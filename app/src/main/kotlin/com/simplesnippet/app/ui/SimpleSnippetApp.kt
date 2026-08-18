@@ -146,6 +146,7 @@ fun SimpleSnippetApp() {
                     isStandalone = true
                 )
                 "test" -> TestScreen(
+                    config = config,
                     onStartTest = { prefs.edit().putBoolean(SnippetAccessibilityService.KEY_TESTING, true).apply() },
                     onStopTest = { prefs.edit().putBoolean(SnippetAccessibilityService.KEY_TESTING, false).apply() },
                     onBack = { navigateTo("settings") }
