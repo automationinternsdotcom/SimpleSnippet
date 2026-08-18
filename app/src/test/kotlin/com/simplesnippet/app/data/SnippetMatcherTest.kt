@@ -205,4 +205,18 @@ class SnippetMatcherTest {
         assertFalse(SnippetMatcher.isValidShortcut("my name"))
         assertFalse(SnippetMatcher.isValidShortcut("tab\there"))
     }
+
+    @Test
+    fun `quick-save gate rejects a parsed shortcut that contains whitespace`() {
+        // Mirrors the service exactly: findSaveCommand parses, isValidShortcut gates.
+        val spaced = SnippetMatcher.findSaveCommand("(.save:my name:+15550199)", "(.save:%:%)")
+        assertNotNull(spaced)
+        assertEquals("my name", spaced!!.trigger)
+        assertFalse(SnippetMatcher.isValidShortcut(spaced.trigger))
+
+        val clean = SnippetMatcher.findSaveCommand("(.save:ph:+15550199)", "(.save:%:%)")
+        assertNotNull(clean)
+        assertEquals("ph", clean!!.trigger)
+        assertTrue(SnippetMatcher.isValidShortcut(clean.trigger))
+    }
 }
