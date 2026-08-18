@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.google.gson.GsonBuilder
 import com.simplesnippet.app.data.AppConfig
+import com.simplesnippet.app.data.CURRENT_CONFIG_VERSION
 import com.simplesnippet.app.data.normalized
 import com.simplesnippet.app.service.SnippetAccessibilityService
 import com.simplesnippet.app.ui.screens.*
@@ -33,14 +34,35 @@ fun SimpleSnippetApp() {
         )
     }
 
-    fun loadConfig(): AppConfig = try {
-        gson.fromJson(
-            prefs.getString(SnippetAccessibilityService.KEY_CONFIG, null),
-            AppConfig::class.java
-        )
-    } catch (e: Exception) {
-        null
-    }.normalized()
+    fun loadConfig(): AppConfig {
+        val stored = try {
+            gson.fromJson(
+                prefs.getString(SnippetAccessibilityService.KEY_CONFIG, null),
+                AppConfig::class.java
+            )
+        } catch (e: Exception) {
+            null
+        }
+        // normalized() mutates and returns the same instance, so the stored
+        // version has to be captured first: a v1 blob reads 0 here and
+        // CURRENT_CONFIG_VERSION after. A missing/unparseable blob yields the
+        // constructor-built default, which is already current — treating it as
+        // "unchanged" keeps first launch from writing a config nobody asked for.
+        val versionBefore = stored?.configVersion ?: CURRENT_CONFIG_VERSION
+        val config = stored.normalized()
+        if (versionBefore != config.configVersion) {
+            // One-shot write-back so the migration survives a restart. Done here
+            // and nowhere else: the accessibility service's load path must stay
+            // read-only, because writing from it re-enters its own prefs
+            // listener, cancelling pending debounces and tearing down an open
+            // picker. The listener re-entry here is harmless and self-limiting —
+            // the reload sees a current version and writes nothing.
+            prefs.edit()
+                .putString(SnippetAccessibilityService.KEY_CONFIG, gson.toJson(config))
+                .apply()
+        }
+        return config
+    }
 
     // Determine initial screen
     val hasSeenOnboarding = prefs.getBoolean("has_seen_onboarding", false)
