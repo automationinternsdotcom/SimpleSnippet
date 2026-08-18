@@ -80,7 +80,7 @@ class SnippetAccessibilityService : AccessibilityService() {
 
                 val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                     .setContentTitle("SimpleSnippet is active")
-                    .setContentText("Watching for snippet triggers.")
+                    .setContentText("Watching for snippet shortcuts.")
                     .setSmallIcon(R.drawable.ic_notification_monochrome)
                     .setLargeIcon(BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher))
                     .setContentIntent(pendingIntent)

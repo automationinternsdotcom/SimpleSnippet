@@ -20,9 +20,11 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun TypingAnimationPreview() {
+    // Scenario 2 deliberately uses a shortcut with no leading punctuation: there
+    // is no global prefix any more, so a shortcut can be any string you like.
     val scenarios = listOf(
         Pair("My address is ..email", "My address is user@example.com"),
-        Pair("..sign", "Best regards,\nUser"),
+        Pair("Any shortcut you like: omw", "Any shortcut you like: On my way!"),
         Pair("(.save:ph:+1 555 0199)", "+1 555 0199")
     )
     
