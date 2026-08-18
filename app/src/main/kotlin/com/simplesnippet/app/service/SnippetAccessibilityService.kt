@@ -80,7 +80,7 @@ class SnippetAccessibilityService : AccessibilityService() {
 
                 val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                     .setContentTitle("SimpleSnippet is active")
-                    .setContentText("Watching for snippet triggers.")
+                    .setContentText("Watching for snippet shortcuts.")
                     .setSmallIcon(R.drawable.ic_notification_monochrome)
                     .setLargeIcon(BitmapFactory.decodeResource(context.resources, R.mipmap.ic_launcher))
                     .setContentIntent(pendingIntent)
@@ -104,6 +104,11 @@ class SnippetAccessibilityService : AccessibilityService() {
     // SharedPreferences only holds a weak reference to its listener, so this
     // must be a strong field or the listener is silently garbage collected.
     private var prefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    // Every keystroke after a malformed quick-save command re-parses the same
+    // command, so remember the last one we rejected and toast only once per
+    // distinct command instead of once per character typed.
+    private var lastRejectedSaveCommand: String? = null
 
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
 
@@ -174,8 +179,18 @@ class SnippetAccessibilityService : AccessibilityService() {
 
         try {
             // Quick-save runs before expansion on purpose: a save payload that
-            // contains an existing trigger must be saved, not expanded.
+            // contains an existing shortcut must be saved, not expanded.
             SnippetMatcher.findSaveCommand(currentText, cfg.saveSnippetPattern)?.let { cmd ->
+                // The same validator the snippet dialog uses, so a quick-save
+                // cannot create a shortcut the dialog would have refused.
+                if (!SnippetMatcher.isValidShortcut(cmd.trigger)) {
+                    if (lastRejectedSaveCommand != cmd.fullMatch) {
+                        lastRejectedSaveCommand = cmd.fullMatch
+                        overlayManager.showToast("Shortcut can't contain spaces — not saved")
+                    }
+                    return
+                }
+                lastRejectedSaveCommand = null
                 val existing = cfg.snippets.find { it.trigger == cmd.trigger }
                 if (existing != null) {
                     if (!existing.contents.contains(cmd.content)) existing.contents.add(cmd.content)
@@ -190,7 +205,6 @@ class SnippetAccessibilityService : AccessibilityService() {
 
             val match = SnippetMatcher.find(
                 currentText,
-                cfg.snippetTriggerPrefix,
                 cfg.snippets,
                 cfg.allowTriggerAnywhere
             )
@@ -226,8 +240,10 @@ class SnippetAccessibilityService : AccessibilityService() {
      * variation, and splicing on it would clobber whatever was typed since.
      *
      * Re-running SnippetMatcher.find on the fresh text (restricted to the one
-     * matched snippet) re-applies the end-of-text anchor and keeps production
-     * on the same find/splice code the unit tests exercise.
+     * live snippet, whose trigger is now the whole shortcut) re-applies the
+     * end-of-text anchor and the boundary rule, and keeps production on the
+     * same find/splice code the unit tests exercise. The stale-config
+     * invalidation below is unchanged.
      *
      * [capturedText] is the event-time text, used as a fallback for apps whose
      * nodes report empty text (detection has the same fallback via event.text —
@@ -252,7 +268,6 @@ class SnippetAccessibilityService : AccessibilityService() {
             val freshText = node.text?.toString()?.takeIf { it.isNotEmpty() } ?: capturedText
             val fresh = SnippetMatcher.find(
                 freshText,
-                cfg.snippetTriggerPrefix,
                 listOf(liveSnippet),
                 cfg.allowTriggerAnywhere
             ) ?: return
