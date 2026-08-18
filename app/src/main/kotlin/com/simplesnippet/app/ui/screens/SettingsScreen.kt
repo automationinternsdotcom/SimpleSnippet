@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.simplesnippet.app.BuildConfig
 import com.simplesnippet.app.data.AppConfig
+import com.simplesnippet.app.data.SnippetMatcher
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -30,10 +31,16 @@ fun SettingsScreen(
     onNavigate: (String) -> Unit
 ) {
     // Drafts are re-keyed on the persisted value so an external config change resyncs them.
-    var prefixDraft by remember(config.snippetTriggerPrefix) { mutableStateOf(config.snippetTriggerPrefix) }
+    var savePatternDraft by remember(config.saveSnippetPattern) { mutableStateOf(config.saveSnippetPattern) }
     var delayDraft by remember(config.triggerDebounceMs) { mutableStateOf(config.triggerDebounceMs.toFloat()) }
 
-    val isPrefixValid = prefixDraft.isNotBlank() && !prefixDraft.any { it.isWhitespace() }
+    // Validate and apply the trimmed value, so surrounding whitespace can never
+    // become part of a literal segment of the pattern.
+    val savePatternCandidate = savePatternDraft.trim()
+    val isSavePatternValid = SnippetMatcher.isValidSavePattern(savePatternCandidate)
+    val savePatternPreview = savePatternCandidate
+        .replaceFirst("%", "shortcut")
+        .replaceFirst("%", "content")
 
     Scaffold(
         topBar = {
@@ -58,19 +65,21 @@ fun SettingsScreen(
         ) {
             SettingsSectionHeader("EXPANSION")
 
-            // 1. Trigger prefix. Applied on confirm, never per keystroke: the accessibility
+            // 1. Quick-save pattern. Applied on confirm, never per keystroke: the accessibility
             // service reloads its config on every prefs change, so persisting a half-typed
-            // prefix ("." on the way to "..") would break live expansion until the user finished.
+            // pattern would silently disable quick-save until the user finished typing.
+            // Invalid input can't be applied at all — an unusable pattern makes
+            // SnippetMatcher.findSaveCommand return null with no visible error.
             OutlinedTextField(
-                value = prefixDraft,
-                onValueChange = { prefixDraft = it },
-                label = { Text("Trigger prefix") },
+                value = savePatternDraft,
+                onValueChange = { savePatternDraft = it },
+                label = { Text("Quick-save pattern") },
                 singleLine = true,
-                isError = !isPrefixValid,
+                isError = !isSavePatternValid,
                 supportingText = {
                     Text(
-                        if (isPrefixValid) "${prefixDraft}email → user@example.com"
-                        else "Prefix can't be blank or contain spaces",
+                        if (isSavePatternValid) "Type '$savePatternPreview' in any field to save a snippet on the spot."
+                        else "Needs exactly two % placeholders with text before, between, and after them.",
                         fontSize = 12.sp
                     )
                 },
@@ -78,51 +87,19 @@ fun SettingsScreen(
             )
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 Button(
-                    onClick = { onSave(config.copy(snippetTriggerPrefix = prefixDraft.trim())) },
-                    enabled = isPrefixValid && prefixDraft != config.snippetTriggerPrefix
+                    onClick = { onSave(config.copy(saveSnippetPattern = savePatternCandidate)) },
+                    enabled = isSavePatternValid && savePatternCandidate != config.saveSnippetPattern
                 ) { Text("Apply") }
             }
 
             Spacer(Modifier.height(16.dp))
 
-            // 2. Quick-save pattern is read-only on purpose: a malformed pattern (wrong number
-            // of '%' placeholders) makes SnippetMatcher.findSaveCommand return null, silently
-            // disabling quick-save with no visible error.
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        "Quick save",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        config.saveSnippetPattern.replaceFirst("%", "name").replaceFirst("%", "content"),
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Type this in any text field to save a snippet on the spot.",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            // 3. Match triggers anywhere vs. only at the caret's end position.
+            // 2. Match shortcuts anywhere vs. only at the caret's end position.
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Expand anywhere in text", fontSize = 16.sp, color = MaterialTheme.colorScheme.onSurface)
                     Text(
-                        "Match triggers mid-text instead of only at the end",
+                        "Match shortcuts mid-text instead of only at the end",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -136,7 +113,7 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(16.dp))
 
-            // 4. Debounce. Persisted on gesture end only, so dragging doesn't spam the service.
+            // 3. Debounce. Persisted on gesture end only, so dragging doesn't spam the service.
             Text(
                 "Expansion delay: ${delayDraft.toLong()} ms",
                 fontSize = 16.sp,
@@ -150,7 +127,7 @@ fun SettingsScreen(
                 onValueChangeFinished = { onSave(config.copy(triggerDebounceMs = delayDraft.toLong())) }
             )
             Text(
-                "How long to wait after typing before a single-variation snippet auto-expands.",
+                "How long to wait after typing a shortcut before a single-variation snippet auto-expands.",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
