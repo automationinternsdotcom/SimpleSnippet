@@ -190,7 +190,6 @@ class SnippetAccessibilityService : AccessibilityService() {
 
             val match = SnippetMatcher.find(
                 currentText,
-                cfg.snippetTriggerPrefix,
                 cfg.snippets,
                 cfg.allowTriggerAnywhere
             )
@@ -226,8 +225,10 @@ class SnippetAccessibilityService : AccessibilityService() {
      * variation, and splicing on it would clobber whatever was typed since.
      *
      * Re-running SnippetMatcher.find on the fresh text (restricted to the one
-     * matched snippet) re-applies the end-of-text anchor and keeps production
-     * on the same find/splice code the unit tests exercise.
+     * live snippet, whose trigger is now the whole shortcut) re-applies the
+     * end-of-text anchor and the boundary rule, and keeps production on the
+     * same find/splice code the unit tests exercise. The stale-config
+     * invalidation below is unchanged.
      *
      * [capturedText] is the event-time text, used as a fallback for apps whose
      * nodes report empty text (detection has the same fallback via event.text —
@@ -252,7 +253,6 @@ class SnippetAccessibilityService : AccessibilityService() {
             val freshText = node.text?.toString()?.takeIf { it.isNotEmpty() } ?: capturedText
             val fresh = SnippetMatcher.find(
                 freshText,
-                cfg.snippetTriggerPrefix,
                 listOf(liveSnippet),
                 cfg.allowTriggerAnywhere
             ) ?: return
