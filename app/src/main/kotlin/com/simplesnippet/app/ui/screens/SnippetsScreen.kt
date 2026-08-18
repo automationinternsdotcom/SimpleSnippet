@@ -29,6 +29,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.simplesnippet.app.data.AppConfig
 import com.simplesnippet.app.data.Snippet
+import com.simplesnippet.app.data.SnippetMatcher
 import com.simplesnippet.app.service.SnippetAccessibilityService
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -176,10 +177,10 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onNavigate: (
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text("Usage:", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                    Text("Type '${config.snippetTriggerPrefix}' + Trigger Name to expand.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                    Text("Type a snippet's shortcut (e.g. ..email) to expand it.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
                     Spacer(Modifier.height(4.dp))
                     Text("Quick Save:", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                    val saveExample = config.saveSnippetPattern.replaceFirst("%", "name").replaceFirst("%", "content")
+                    val saveExample = config.saveSnippetPattern.replaceFirst("%", "shortcut").replaceFirst("%", "content")
                     Text("Type '$saveExample' to save instantly.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
                 }
             }
@@ -240,6 +241,25 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onNavigate: (
         }
 
         if (showEditDialog) {
+            // Legacy tolerance: a shortcut migrated from v1 may violate today's
+            // rules (whitespace inside a v1 trigger, say). Re-saving it untouched
+            // has to stay possible, so validation only applies once the text is
+            // actually modified — and an unchanged shortcut is saved verbatim,
+            // because trimming it would itself count as a modification.
+            val shortcutUnchanged = originalTrigger != null && tTrigger == originalTrigger
+            val shortcutToSave = if (shortcutUnchanged) tTrigger else tTrigger.trim()
+            val isShortcutValid = shortcutUnchanged || SnippetMatcher.isValidShortcut(shortcutToSave)
+            // Display-only gate: a brand-new snippet starts empty, and scolding the
+            // user before they have typed anything is noise. Save still keys off
+            // isShortcutValid, so the pristine field cannot be saved either way.
+            val showShortcutError = !isShortcutValid && tTrigger.isNotEmpty()
+            val hasContent = tContents.any { it.isNotBlank() }
+            // Runaway risk: expanding into text that still contains the shortcut
+            // re-matches on the next keystroke, especially with "expand anywhere"
+            // on. Warn, but never block — self-reference is occasionally wanted.
+            val selfExpansionRisk = shortcutToSave.isNotEmpty() &&
+                tContents.any { it.contains(shortcutToSave) }
+
             AlertDialog(
                 onDismissRequest = { showEditDialog = false },
                 title = { Text(if (originalTrigger == null) "New Snippet" else "Edit Snippet") },
@@ -248,8 +268,16 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onNavigate: (
                         OutlinedTextField(
                             value = tTrigger,
                             onValueChange = { tTrigger = it },
-                            label = { Text("Trigger Name (e.g. email)") },
+                            label = { Text("Shortcut (e.g. ..email)") },
                             singleLine = true,
+                            isError = showShortcutError,
+                            supportingText = {
+                                Text(
+                                    if (showShortcutError) "Shortcut can't be blank or contain spaces."
+                                    else "Type this anywhere to expand the snippet.",
+                                    fontSize = 12.sp
+                                )
+                            },
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(16.dp))
@@ -287,27 +315,48 @@ fun SnippetsScreen(config: AppConfig, onSave: (AppConfig) -> Unit, onNavigate: (
                                 }
                             }
                         }
+
+                        if (selfExpansionRisk) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    "A variation contains '$shortcutToSave' — the inserted text may expand again.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
                     }
                 },
                 confirmButton = {
-                    Button(onClick = {
-                        val validContents = tContents.filter { it.isNotBlank() }.toMutableList()
-                        if (tTrigger.isNotBlank() && validContents.isNotEmpty()) {
+                    Button(
+                        // Disabled rather than silently doing nothing, which is
+                        // what the old `if (...)` guard around the save did.
+                        enabled = isShortcutValid && hasContent,
+                        onClick = {
+                            val validContents = tContents.filter { it.isNotBlank() }.toMutableList()
                             val n = snippets.toMutableList()
 
-                            // Check for duplicate trigger if creating NEW snippet OR changing trigger of existing one
-                            if (tTrigger != originalTrigger && n.any { it.trigger == tTrigger }) {
-                                Toast.makeText(context, "Snippet '$tTrigger' already exists!", Toast.LENGTH_SHORT).show()
+                            // Duplicate check: creating a new snippet, or renaming
+                            // an existing one onto a shortcut already in use.
+                            if (shortcutToSave != originalTrigger && n.any { it.trigger == shortcutToSave }) {
+                                Toast.makeText(context, "Snippet '$shortcutToSave' already exists!", Toast.LENGTH_SHORT).show()
                                 return@Button
                             }
 
                             if (originalTrigger != null) n.removeIf { it.trigger == originalTrigger }
-                            n.removeIf { it.trigger == tTrigger }
-                            n.add(Snippet(tTrigger, contents = validContents))
+                            n.removeIf { it.trigger == shortcutToSave }
+                            n.add(Snippet(shortcutToSave, contents = validContents))
                             onSave(config.copy(snippets = n))
                             showEditDialog = false
                         }
-                    }) { Text("Save") }
+                    ) { Text("Save") }
                 },
                 dismissButton = {
                     TextButton(onClick = { showEditDialog = false }) { Text("Cancel") }
