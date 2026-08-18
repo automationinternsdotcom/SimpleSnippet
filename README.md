@@ -12,7 +12,7 @@
 
 ## Features
 
-* **Snippet Expansion** — Type a short shortcut and it expands into full text, in any app.
+* **Snippet Expansion** — Type a shortcut and it expands into full text, in any app.
   * Example: `..email` → `user@example.com`
 * **Free-Form Shortcuts** — Every snippet owns its whole shortcut, so `..email`, `;sig`, and plain `omw` can all coexist. A shortcut that begins with a letter or digit won't fire mid-word, so `omw` never expands inside `shomw` — but it still fires as soon as you finish typing it, so avoid shortcuts that begin longer words you type.
 * **Multiple Variations** — Attach several possible expansions to one shortcut; a floating picker lets you choose which one to insert.
@@ -30,9 +30,9 @@
 | Pick a variation | Type a shortcut that has multiple saved contents; a picker pops up |
 | Quick save a new snippet | Type `(.save:shortcut:content)` anywhere |
 
-Each snippet's shortcut is free-form — set it to whatever you like when you create the snippet. The quick-save pattern is configurable in **Settings**; it just needs two `%` placeholders with text before, between, and after them.
+Each snippet's shortcut is free-form — set it to whatever you like when you create the snippet. The quick-save pattern is configurable in **Settings**; it just needs exactly two `%` placeholders with text before, between, and after them.
 
-**Upgrading from 1.0.x:** your snippets migrate automatically the first time you open the app. Whatever trigger prefix you had configured is folded into each snippet's shortcut, so everything you already type keeps working.
+**Upgrading from 1.0.x:** your snippets migrate automatically the first time you open the app. Whatever trigger prefix you had configured is folded into each snippet's shortcut, so everything you already type keeps working. Don't reinstall 1.0.x after upgrading — a config saved by the old version loses its version marker, and upgrading again would prefix your shortcuts a second time.
 
 ---
 
